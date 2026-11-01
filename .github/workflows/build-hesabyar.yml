@@ -29,25 +29,52 @@ jobs:
           mkdir -p project decoded_parts
           for f in source_parts/part00a.b64 source_parts/part00b.b64 source_parts/part01.b64 source_parts/part02.b64 source_parts/part03.b64; do
             echo "Decoding $f"
-            wc -c "$f"
-            sha256sum "$f"
             base64 -d "$f" > "decoded_parts/$(basename "$f" .b64).bin"
           done
           cat decoded_parts/part00a.bin decoded_parts/part00b.bin decoded_parts/part01.bin decoded_parts/part02.bin decoded_parts/part03.bin > hesabyar-source.zip
           unzip -t hesabyar-source.zip
           unzip -q hesabyar-source.zip -d project
 
-      - name: Install Android SDK 36
+      - name: Locate and install Android SDK 36
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "Using SDK_ROOT=$SDK_ROOT"
+          ls -la "$SDK_ROOT" || true
+          find "$SDK_ROOT" -maxdepth 5 -type f -name sdkmanager -print || true
+          SDKMANAGER=""
+          for candidate in \
+            "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "$SDK_ROOT/cmdline-tools/bin/sdkmanager" \
+            "$SDK_ROOT/tools/bin/sdkmanager"; do
+            if [ -x "$candidate" ]; then SDKMANAGER="$candidate"; break; fi
+          done
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$SDK_ROOT" -maxdepth 6 -type f -name sdkmanager -perm -111 | head -n 1)"
+          fi
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under $SDK_ROOT"
+            exit 1
+          fi
+          echo "SDKMANAGER=$SDKMANAGER"
+          "$SDKMANAGER" --version
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          echo "sdk.dir=$SDK_ROOT" > project/local.properties
+          test -f "$SDK_ROOT/platforms/android-36/android.jar"
 
       - name: Build debug APK
         working-directory: project
         run: gradle --no-daemon --stacktrace assembleDebug
 
-      - name: Copy APK
-        run: cp project/app/build/outputs/apk/debug/app-debug.apk HesabYar2027-original.apk
+      - name: Copy and verify APK
+        run: |
+          cp project/app/build/outputs/apk/debug/app-debug.apk HesabYar2027-original.apk
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          APKSIGNER="$SDK_ROOT/build-tools/36.0.0/apksigner"
+          if [ -x "$APKSIGNER" ]; then "$APKSIGNER" verify --verbose HesabYar2027-original.apk; fi
+          sha256sum HesabYar2027-original.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
