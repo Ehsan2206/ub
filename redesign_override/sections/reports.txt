@@ -1,0 +1,37 @@
+@Composable
+fun ReportsScreen(padding:PaddingValues,accounts:List<Account>,people:List<Person>,report:ReportSummary,onLoad:(Long,Long,Long?,Long?)->Unit){
+    val zone=ZoneId.systemDefault()
+    var range by remember{mutableStateOf(ReportRange.MONTH)}
+    var accountId by remember{mutableStateOf<Long?>(null)}
+    var personId by remember{mutableStateOf<Long?>(null)}
+    var customFrom by remember{mutableStateOf(DateUtil.plusJalaliMonths(LocalDate.now(zone), -1))}
+    var customTo by remember{mutableStateOf(LocalDate.now(zone))}
+    fun customBounds(): Pair<Long,Long> {
+        val from = customFrom.atStartOfDay(zone).toInstant().toEpochMilli()
+        val to = customTo.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()-1
+        return from to to
+    }
+    fun bounds():Pair<Long,Long> = when(range){
+        ReportRange.TODAY -> DateUtil.dayRange(LocalDate.now(zone))
+        ReportRange.WEEK -> DateUtil.jalaliWeekRange(LocalDate.now(zone))
+        ReportRange.MONTH -> DateUtil.jalaliMonthRange(LocalDate.now(zone))
+        ReportRange.YEAR -> DateUtil.jalaliYearRange(LocalDate.now(zone))
+        ReportRange.CUSTOM -> customBounds()
+    }
+    LaunchedEffect(range,accountId,personId,customFrom,customTo){ val b=bounds(); onLoad(b.first,b.second,accountId,personId) }
+    Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=16.dp,vertical=12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        ScreenTitle("گزارش‌های مالی", "تحلیل درآمد و هزینه بر اساس تقویم شمسی", Icons.Rounded.BarChart)
+        Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)){ReportRange.entries.forEach{r->FilterChip(range==r,{range=r},{Text(r.label)})}}
+        if(range==ReportRange.CUSTOM){Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){DateButton("از",customFrom,Modifier.weight(1f)){customFrom=it};DateButton("تا",customTo,Modifier.weight(1f)){customTo=it}}}
+        Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)){SimpleSelectorChip("همه حساب‌ها",accounts.map{it.id to it.name},accountId){accountId=it};SimpleSelectorChip("همه اشخاص",people.map{it.id to it.name},personId){personId=it}}
+        Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){ReportValue("درآمد",report.income,MaterialTheme.colorScheme.secondary,Modifier.weight(1f));ReportValue("هزینه",report.expense,MaterialTheme.colorScheme.error,Modifier.weight(1f))}
+        ReportValue("خالص بازه",report.net,if(report.net>=0)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,Modifier.fillMaxWidth())
+        Text("هزینه بر اساس دسته‌بندی",fontSize=18.sp,fontWeight=FontWeight.Black)
+        if(report.byCategory.isEmpty()) EmptyCard("در این بازه هزینه‌ای ثبت نشده") else {
+            val max=report.byCategory.maxOf{it.second}.coerceAtLeast(1)
+            report.byCategory.forEach{(name,value)->Column(verticalArrangement=Arrangement.spacedBy(5.dp)){Row{Text(name,Modifier.weight(1f),fontWeight=FontWeight.Medium);Text(Money.format(value),fontSize=12.sp)};Box(Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(99.dp)).background(MaterialTheme.colorScheme.surfaceVariant)){Box(Modifier.fillMaxWidth((value.toFloat()/max.toFloat()).coerceIn(.03f,1f)).fillMaxHeight().background(MaterialTheme.colorScheme.primary))}}}
+        }
+        Spacer(Modifier.height(100.dp))
+    }
+}
+
