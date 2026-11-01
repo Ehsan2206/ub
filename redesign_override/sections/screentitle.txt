@@ -1,0 +1,8 @@
+@Composable
+private fun ScreenTitle(title:String,subtitle:String,icon:androidx.compose.ui.graphics.vector.ImageVector){
+    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+        Surface(shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.primaryContainer){Icon(icon,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.padding(10.dp))}
+        Column(Modifier.weight(1f)){Text(title,fontSize=24.sp,fontWeight=FontWeight.Black);Text(subtitle,fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+    }
+}
+
