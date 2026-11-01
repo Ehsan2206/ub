@@ -1,0 +1,145 @@
+@Composable
+fun HomeScreen(
+    padding: PaddingValues,
+    summary: DashboardSummary,
+    recent: List<TransactionRow>,
+    people: List<PersonBalance>,
+    smsAllowed: Boolean,
+    onRequestSms: () -> Unit,
+    onSyncSms: () -> Unit,
+    onOpenTransactions: () -> Unit,
+    onOpenPeople: () -> Unit
+) {
+    val today = remember { DateUtil.today() }
+    Column(
+        Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                Icon(Icons.Rounded.AccountBalanceWallet, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(11.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("حساب‌یار", fontSize = 26.sp, fontWeight = FontWeight.Black)
+                Text("مدیریت مالی شخصی", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+            }
+            Surface(shape = RoundedCornerShape(99.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.CalendarMonth, null, modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(6.dp))
+                    Text(DateUtil.formatLongDate(today), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        Box(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(30.dp)).background(
+                Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary))
+            ).padding(20.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("موجودی کل", color = Color.White.copy(alpha = .78f), fontSize = 12.sp)
+                        Spacer(Modifier.height(4.dp))
+                        Text(Money.format(summary.totalBalance), color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Black)
+                    }
+                    Surface(shape = RoundedCornerShape(18.dp), color = Color.White.copy(alpha = .14f)) {
+                        Icon(Icons.Rounded.Wallet, null, tint = Color.White, modifier = Modifier.padding(12.dp))
+                    }
+                }
+                Text("خلاصه ${DateUtil.jalaliMonthName(today)}", color = Color.White.copy(alpha=.72f), fontSize = 11.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HeroMini("درآمد", summary.monthIncome, Icons.Rounded.TrendingUp, Modifier.weight(1f), positive = true)
+                    HeroMini("هزینه", summary.monthExpense, Icons.Rounded.TrendingDown, Modifier.weight(1f), positive = false)
+                }
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            StatCard("طلب من", summary.receivable, Icons.Rounded.CallReceived, Modifier.weight(1f))
+            StatCard("بدهی من", summary.payable, Icons.Rounded.CallMade, Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            StatCard("درآمد امروز", summary.todayIncome, Icons.Rounded.AddCircle, Modifier.weight(1f))
+            StatCard("خرج امروز", summary.todayExpense, Icons.Rounded.RemoveCircle, Modifier.weight(1f))
+        }
+
+        if (!smsAllowed) {
+            Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Surface(shape=RoundedCornerShape(14.dp), color=MaterialTheme.colorScheme.surface.copy(alpha=.75f)) {
+                        Icon(Icons.Rounded.Sms, null, tint=MaterialTheme.colorScheme.primary, modifier=Modifier.padding(9.dp))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("ثبت خودکار از پیامک بانکی", fontWeight = FontWeight.Bold)
+                        Text("اختیاری و کاملاً روی همین گوشی", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    FilledTonalButton(onClick = onRequestSms) { Text("فعال‌سازی") }
+                }
+            }
+        } else {
+            OutlinedButton(onClick = onSyncSms, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+                Icon(Icons.Rounded.Sync, null); Spacer(Modifier.width(8.dp)); Text("همگام‌سازی پیامک‌های بانکی")
+            }
+        }
+
+        SectionHeader("آخرین تراکنش‌ها", "مشاهده همه", onOpenTransactions)
+        if (recent.isEmpty()) EmptyCard("هنوز تراکنشی ثبت نشده") else recent.forEach { TransactionTile(it) }
+
+        SectionHeader("دنگ‌ها و اشخاص", "مدیریت", onOpenPeople)
+        if (people.isEmpty()) EmptyCard("برای شروع یک شخص اضافه کن") else {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 4.dp)) {
+                items(people.take(6), key = { it.person.id }) { p ->
+                    Surface(shape = RoundedCornerShape(22.dp), tonalElevation = 1.dp, modifier = Modifier.width(170.dp)) {
+                        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Surface(shape=RoundedCornerShape(14.dp), color=MaterialTheme.colorScheme.primaryContainer) {
+                                Icon(Icons.Rounded.Person, null, tint=MaterialTheme.colorScheme.primary, modifier=Modifier.padding(8.dp))
+                            }
+                            Text(p.person.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                when { p.net > 0 -> "${Money.format(p.net)} طلب"; p.net < 0 -> "${Money.format(-p.net)} بدهی"; else -> "تسویه" },
+                                color = when { p.net > 0 -> MaterialTheme.colorScheme.secondary; p.net < 0 -> MaterialTheme.colorScheme.error; else -> MaterialTheme.colorScheme.onSurfaceVariant },
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(p.person.groupName, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(100.dp))
+    }
+}
+
+@Composable
+private fun HeroMini(label: String, value: Long, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier = Modifier, positive: Boolean) {
+    Surface(modifier, color = Color.White.copy(alpha = .13f), shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(verticalAlignment=Alignment.CenterVertically) {
+                Icon(icon, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(label, color = Color.White.copy(alpha=.78f), fontSize=11.sp)
+            }
+            Text(Money.compact(value), color=Color.White, fontWeight=FontWeight.Black, fontSize=15.sp)
+        }
+    }
+}
+
+@Composable
+private fun StatCard(label: String, value: Long, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier = Modifier) {
+    Surface(modifier, shape = RoundedCornerShape(24.dp), tonalElevation = 1.dp) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Surface(shape=RoundedCornerShape(15.dp), color=MaterialTheme.colorScheme.primaryContainer) {
+                Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier=Modifier.padding(9.dp))
+            }
+            Column {
+                Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(Money.compact(value), fontWeight = FontWeight.Black, fontSize = 16.sp)
+            }
+        }
+    }
+}
+
