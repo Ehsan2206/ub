@@ -1,0 +1,357 @@
+<<<FILE:app/src/main/java/ir/hesabyar/finance/data/Models.kt>>>
+package ir.hesabyar.finance.data
+
+enum class TransactionType { INCOME, EXPENSE }
+enum class TransactionSource { MANUAL, SMS, BANK_IMPORT }
+enum class SplitRelation { OWES_ME, I_OWE }
+enum class InstallmentStatus { OPEN, PAID }
+
+data class Account(
+    val id: Long = 0,
+    val name: String,
+    val type: String = "بانک",
+    val bankName: String = "",
+    val cardLast4: String = "",
+    val balance: Long = 0,
+    val groupName: String = "شخصی"
+)
+
+data class Person(
+    val id: Long = 0,
+    val name: String,
+    val phone: String = "",
+    val groupName: String = "دوستان",
+    val note: String = ""
+)
+
+data class Category(
+    val id: Long = 0,
+    val name: String,
+    val type: TransactionType,
+    val icon: String = "•"
+)
+
+data class FinanceTransaction(
+    val id: Long = 0,
+    val amount: Long,
+    val type: TransactionType,
+    val occurredAt: Long,
+    val reason: String,
+    val accountId: Long?,
+    val categoryId: Long?,
+    val personId: Long?,
+    val source: TransactionSource,
+    val note: String = "",
+    val externalKey: String = ""
+)
+
+data class TransactionRow(
+    val transaction: FinanceTransaction,
+    val accountName: String = "",
+    val personName: String = "",
+    val categoryName: String = ""
+)
+
+data class SplitDraft(
+    val personId: Long,
+    val amount: Long,
+    val relation: SplitRelation
+)
+
+data class PersonBalance(
+    val person: Person,
+    val net: Long
+)
+
+
+data class PersonLedgerEntry(
+    val id: Long,
+    val personId: Long,
+    val amountSigned: Long,
+    val occurredAt: Long,
+    val note: String,
+    val transactionId: Long?,
+    val transactionReason: String = ""
+)
+
+data class Installment(
+    val id: Long = 0,
+    val title: String,
+    val amount: Long,
+    val dueAt: Long,
+    val accountId: Long?,
+    val personId: Long?,
+    val repeatUnit: String = "ماه",
+    val repeatEvery: Int = 1,
+    val reminderDaysBefore: Int = 1,
+    val status: InstallmentStatus = InstallmentStatus.OPEN
+)
+
+data class DashboardSummary(
+    val totalBalance: Long = 0,
+    val todayIncome: Long = 0,
+    val todayExpense: Long = 0,
+    val monthIncome: Long = 0,
+    val monthExpense: Long = 0,
+    val receivable: Long = 0,
+    val payable: Long = 0
+)
+
+data class ReportSummary(
+    val income: Long = 0,
+    val expense: Long = 0,
+    val net: Long = 0,
+    val byCategory: List<Pair<String, Long>> = emptyList()
+)
+
+data class BankEntry(
+    val id: Long = 0,
+    val batchId: Long = 0,
+    val occurredAt: Long,
+    val amount: Long,
+    val type: TransactionType,
+    val description: String,
+    val balanceAfter: Long? = null,
+    val matchedTransactionId: Long? = null,
+    val fingerprint: String
+)
+
+data class ImportBatch(
+    val id: Long = 0,
+    val name: String,
+    val importedAt: Long,
+    val totalRows: Int,
+    val matchedRows: Int
+)
+
+data class TransactionFilter(
+    val from: Long? = null,
+    val to: Long? = null,
+    val accountId: Long? = null,
+    val personId: Long? = null,
+    val type: TransactionType? = null,
+    val query: String = ""
+)
+
+<<<END_FILE>>>
+<<<FILE:app/src/main/java/ir/hesabyar/finance/data/FinanceRepository.kt>>>
+package ir.hesabyar.finance.data
+
+import ir.hesabyar.finance.util.DateUtil
+
+import android.content.ContentValues
+import android.content.Context
+import android.database.Cursor
+import android.database.sqlite.SQLiteDatabase
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+
+class FinanceRepository(context: Context) {
+    private val dbHelper = FinanceDb(context.applicationContext)
+
+    fun accounts(): List<Account> = dbHelper.readableDatabase.rawQuery(
+        "SELECT id,name,type,bank_name,card_last4,balance,group_name FROM accounts ORDER BY id DESC", null
+    ).use { c -> buildList { while (c.moveToNext()) add(c.toAccount()) } }
+
+    fun people(): List<Person> = dbHelper.readableDatabase.rawQuery(
+        "SELECT id,name,phone,group_name,note FROM people ORDER BY name COLLATE NOCASE", null
+    ).use { c -> buildList { while (c.moveToNext()) add(c.toPerson()) } }
+
+    fun categories(type: TransactionType? = null): List<Category> {
+        val sql = if (type == null) "SELECT id,name,type,icon FROM categories ORDER BY id" else "SELECT id,name,type,icon FROM categories WHERE type=? ORDER BY id"
+        val args = type?.let { arrayOf(it.name) }
+        return dbHelper.readableDatabase.rawQuery(sql, args).use { c ->
+            buildList { while (c.moveToNext()) add(Category(c.getLong(0), c.getString(1), TransactionType.valueOf(c.getString(2)), c.getString(3))) }
+        }
+    }
+
+
+    fun addCategory(category: Category): Long {
+        val cv = ContentValues().apply { put("name", category.name); put("type", category.type.name); put("icon", category.icon) }
+        return dbHelper.writableDatabase.insert("categories", null, cv)
+    }
+
+    fun addAccount(account: Account): Long {
+        val cv = ContentValues().apply {
+            put("name", account.name); put("type", account.type); put("bank_name", account.bankName)
+            put("card_last4", account.cardLast4); put("balance", account.balance); put("group_name", account.groupName)
+        }
+        return dbHelper.writableDatabase.insert("accounts", null, cv)
+    }
+
+    fun addPerson(person: Person): Long {
+        val cv = ContentValues().apply {
+            put("name", person.name); put("phone", person.phone); put("group_name", person.groupName); put("note", person.note)
+        }
+        return dbHelper.writableDatabase.insert("people", null, cv)
+    }
+
+    fun addTransaction(tx: FinanceTransaction, splits: List<SplitDraft> = emptyList()): Long {
+        val db = dbHelper.writableDatabase
+        db.beginTransaction()
+        return try {
+            val cv = ContentValues().apply {
+                put("amount", tx.amount); put("type", tx.type.name); put("occurred_at", tx.occurredAt)
+                put("reason", tx.reason); tx.accountId?.let { put("account_id", it) }; tx.categoryId?.let { put("category_id", it) }
+                tx.personId?.let { put("person_id", it) }; put("source", tx.source.name); put("note", tx.note); if (tx.externalKey.isNotBlank()) put("external_key", tx.externalKey) else putNull("external_key")
+            }
+            val id = db.insertWithOnConflict("transactions", null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+            if (id > 0) {
+                tx.accountId?.let { accountId ->
+                    val delta = if (tx.type == TransactionType.INCOME) tx.amount else -tx.amount
+                    db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=?", arrayOf(delta, accountId))
+                }
+                splits.forEach { split ->
+                    val signed = if (split.relation == SplitRelation.OWES_ME) split.amount else -split.amount
+                    val lv = ContentValues().apply {
+                        put("person_id", split.personId); put("amount_signed", signed); put("occurred_at", tx.occurredAt)
+                        put("note", tx.reason.ifBlank { "دنگ" }); put("transaction_id", id)
+                    }
+                    db.insert("person_ledger", null, lv)
+                }
+                tx.personId?.takeIf { splits.isEmpty() }?.let { personId ->
+                    // A normal transaction with a counterparty doesn't alter debt automatically.
+                }
+            }
+            db.setTransactionSuccessful()
+            id
+        } finally { db.endTransaction() }
+    }
+
+
+    fun transactionById(id: Long): FinanceTransaction? = dbHelper.readableDatabase.rawQuery(
+        "SELECT id,amount,type,occurred_at,reason,account_id,category_id,person_id,source,note,external_key FROM transactions WHERE id=? LIMIT 1",
+        arrayOf(id.toString())
+    ).use { c ->
+        if (!c.moveToFirst()) null else FinanceTransaction(
+            id = c.getLong(0),
+            amount = c.getLong(1),
+            type = TransactionType.valueOf(c.getString(2)),
+            occurredAt = c.getLong(3),
+            reason = c.getString(4),
+            accountId = c.longOrNull(5),
+            categoryId = c.longOrNull(6),
+            personId = c.longOrNull(7),
+            source = TransactionSource.valueOf(c.getString(8)),
+            note = c.getString(9),
+            externalKey = c.getString(10).orEmpty()
+        )
+    }
+
+    fun updateTransaction(tx: FinanceTransaction): Boolean {
+        val old = transactionById(tx.id) ?: return false
+        val db = dbHelper.writableDatabase
+        db.beginTransaction()
+        return try {
+            old.accountId?.let { oldAccountId ->
+                val oldDelta = if (old.type == TransactionType.INCOME) old.amount else -old.amount
+                db.execSQL("UPDATE accounts SET balance=balance-? WHERE id=?", arrayOf(oldDelta, oldAccountId))
+            }
+
+            val cv = ContentValues().apply {
+                put("amount", tx.amount)
+                put("type", tx.type.name)
+                put("occurred_at", tx.occurredAt)
+                put("reason", tx.reason)
+                if (tx.accountId == null) putNull("account_id") else put("account_id", tx.accountId)
+                if (tx.categoryId == null) putNull("category_id") else put("category_id", tx.categoryId)
+                if (tx.personId == null) putNull("person_id") else put("person_id", tx.personId)
+                put("source", tx.source.name)
+                put("note", tx.note)
+                if (tx.externalKey.isBlank()) putNull("external_key") else put("external_key", tx.externalKey)
+            }
+            val changed = db.update("transactions", cv, "id=?", arrayOf(tx.id.toString())) > 0
+            if (!changed) return false
+
+            tx.accountId?.let { newAccountId ->
+                val newDelta = if (tx.type == TransactionType.INCOME) tx.amount else -tx.amount
+                db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=?", arrayOf(newDelta, newAccountId))
+            }
+
+            // Keep debt/share history linked to this transaction readable after editing.
+            db.execSQL(
+                "UPDATE person_ledger SET occurred_at=?, note=? WHERE transaction_id=?",
+                arrayOf(tx.occurredAt, tx.reason.ifBlank { "دنگ" }, tx.id)
+            )
+            db.setTransactionSuccessful()
+            true
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun resolveSmsAccount(cardLast4: String, sender: String): Account {
+        val current = accounts()
+        if (cardLast4.isNotBlank()) {
+            current.firstOrNull { it.cardLast4 == cardLast4 }?.let { return it }
+        }
+
+        val nonCash = current.filter { it.type != "نقدی" && it.type != "کیف پول" }
+        if (cardLast4.isBlank() && nonCash.size == 1) return nonCash.first()
+
+        current.firstOrNull {
+            it.type == "پیامکی" &&
+                ((cardLast4.isNotBlank() && it.cardLast4 == cardLast4) ||
+                    (cardLast4.isBlank() && sender.isNotBlank() && it.bankName == sender))
+        }?.let { return it }
+
+        val suffix = when {
+            cardLast4.isNotBlank() -> " • $cardLast4"
+            sender.isNotBlank() -> " • ${sender.takeLast(12)}"
+            else -> ""
+        }
+        val id = addAccount(
+            Account(
+                name = "حساب پیامکی$suffix",
+                type = "پیامکی",
+                bankName = sender,
+                cardLast4 = cardLast4,
+                balance = 0L,
+                groupName = "بانکی"
+            )
+        )
+        return accounts().firstOrNull { it.id == id }
+            ?: Account(id = id, name = "حساب پیامکی$suffix", type = "پیامکی", bankName = sender, cardLast4 = cardLast4, balance = 0L, groupName = "بانکی")
+    }
+
+
+    fun repairUnassignedSmsTransactions(): Int {
+        data class PendingSms(val id: Long, val amount: Long, val type: TransactionType, val note: String)
+        val pending = dbHelper.readableDatabase.rawQuery(
+            "SELECT id,amount,type,note FROM transactions WHERE source='SMS' AND account_id IS NULL ORDER BY id",
+            null
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    add(PendingSms(c.getLong(0), c.getLong(1), TransactionType.valueOf(c.getString(2)), c.getString(3)))
+                }
+            }
+        }
+        var repaired = 0
+        pending.forEach { item ->
+            val sender = item.note.substringAfter("از پیامک", "").trim()
+            val account = resolveSmsAccount("", sender)
+            val db = dbHelper.writableDatabase
+            db.beginTransaction()
+            try {
+                val cv = ContentValues().apply { put("account_id", account.id) }
+                val changed = db.update(
+                    "transactions",
+                    cv,
+                    "id=? AND account_id IS NULL",
+                    arrayOf(item.id.toString())
+                )
+                if (changed > 0) {
+                    val delta = if (item.type == TransactionType.INCOME) item.amount else -item.amount
+                    db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=?", arrayOf(delta, account.id))
+                    repaired++
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        }
+        return repaired
+    }
+
