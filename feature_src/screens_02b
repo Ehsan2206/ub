@@ -1,0 +1,50 @@
+private fun ScreenTitle(title:String,subtitle:String,icon:androidx.compose.ui.graphics.vector.ImageVector){
+    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+        Surface(shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.primaryContainer){Icon(icon,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.padding(10.dp))}
+        Column(Modifier.weight(1f)){Text(title,fontSize=24.sp,fontWeight=FontWeight.Black);Text(subtitle,fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+    }
+}
+
+@Composable
+private fun FeatureSection(title:String,icon:androidx.compose.ui.graphics.vector.ImageVector,action:String?=null,onAction:()->Unit={},content:@Composable ColumnScope.()->Unit){Surface(shape=RoundedCornerShape(26.dp),tonalElevation=1.dp){Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Row(verticalAlignment=Alignment.CenterVertically){Icon(icon,null,tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.width(9.dp));Text(title,fontWeight=FontWeight.Black,fontSize=17.sp,modifier=Modifier.weight(1f));action?.let{TextButton(onClick=onAction){Text(it)}}};content()}}}
+
+@Composable
+private fun AddCategoryDialog(onDismiss:()->Unit,onSave:(Category)->Unit){var name by remember{mutableStateOf("")};var type by remember{mutableStateOf(TransactionType.EXPENSE)};AlertDialog(onDismissRequest=onDismiss,title={Text("دسته‌بندی مالی جدید")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){FilterChip(type==TransactionType.EXPENSE,{type=TransactionType.EXPENSE},{Text("هزینه")});FilterChip(type==TransactionType.INCOME,{type=TransactionType.INCOME},{Text("درآمد")})};OutlinedTextField(name,{name=it},label={Text("نام دسته‌بندی")})}},confirmButton={Button(onClick={onSave(Category(name=name.trim(),type=type,icon=if(type==TransactionType.INCOME)"+" else "−"))},enabled=name.isNotBlank()){Text("ذخیره")}},dismissButton={TextButton(onClick=onDismiss){Text("لغو")}})}
+
+@Composable
+private fun AddAccountDialog(onDismiss:()->Unit,onSave:(Account)->Unit){var name by remember{mutableStateOf("")};var type by remember{mutableStateOf("بانک")};var bank by remember{mutableStateOf("")};var last4 by remember{mutableStateOf("")};var balance by remember{mutableStateOf("")};var group by remember{mutableStateOf("شخصی")};AlertDialog(onDismissRequest=onDismiss,title={Text("حساب جدید")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(7.dp)){OutlinedTextField(name,{name=it},label={Text("نام حساب")});OutlinedTextField(type,{type=it},label={Text("نوع: بانک، نقدی، کیف پول...")});OutlinedTextField(bank,{bank=it},label={Text("نام بانک")});OutlinedTextField(last4,{last4=it.takeLast(4)},label={Text("۴ رقم آخر کارت/حساب")});OutlinedTextField(balance,{balance=it},label={Text("موجودی اولیه (تومان)")});OutlinedTextField(group,{group=it},label={Text("دسته‌بندی حساب")})}},confirmButton={Button(onClick={onSave(Account(name=name.trim(),type=type.trim(),bankName=bank.trim(),cardLast4=last4.trim(),balance=Money.parse(balance),groupName=group.trim().ifBlank{"شخصی"}))},enabled=name.isNotBlank()){Text("ذخیره")}},dismissButton={TextButton(onClick=onDismiss){Text("لغو")}})}
+
+@Composable
+private fun AddInstallmentDialog(accounts:List<Account>,people:List<Person>,onDismiss:()->Unit,onSave:(Installment,Int)->Unit){
+    val zone=ZoneId.systemDefault();var title by remember{mutableStateOf("")};var amount by remember{mutableStateOf("")};var date by remember{mutableStateOf(DateUtil.plusJalaliMonths(LocalDate.now(zone),1))};var reminder by remember{mutableStateOf("1")};var count by remember{mutableStateOf("1")};var everyMonths by remember{mutableStateOf("1")};var accountId by remember{mutableStateOf<Long?>(accounts.firstOrNull()?.id)};var personId by remember{mutableStateOf<Long?>(null)}
+    AlertDialog(onDismissRequest=onDismiss,title={Text("برنامه اقساط")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
+        OutlinedTextField(title,{title=it},label={Text("عنوان قسط / قرارداد")});OutlinedTextField(amount,{amount=it},label={Text("مبلغ هر قسط (تومان)")});DateButton("اولین سررسید",date,Modifier.fillMaxWidth()){date=it}
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedTextField(count,{count=it},label={Text("تعداد اقساط")},modifier=Modifier.weight(1f));OutlinedTextField(everyMonths,{everyMonths=it},label={Text("فاصله (ماه)")},modifier=Modifier.weight(1f))}
+        SimpleSelectorField("حساب پرداخت",accounts.map{it.id to it.name},accountId){accountId=it};SimpleSelectorField("طرف حساب (اختیاری)",people.map{it.id to it.name},personId){personId=it};OutlinedTextField(reminder,{reminder=it},label={Text("چند روز قبل یادآوری شود؟")})
+    }},confirmButton={Button(onClick={onSave(Installment(title=title.trim(),amount=Money.parse(amount),dueAt=date.atStartOfDay(zone).toInstant().toEpochMilli(),accountId=accountId,personId=personId,repeatUnit="ماه",repeatEvery=everyMonths.toIntOrNull()?.coerceIn(1,24)?:1,reminderDaysBefore=reminder.toIntOrNull()?.coerceIn(0,30)?:1),count.toIntOrNull()?.coerceIn(1,120)?:1)},enabled=title.isNotBlank()&&Money.parse(amount)>0){Text("ساخت برنامه")}},dismissButton={TextButton(onClick=onDismiss){Text("لغو")}})
+}
+
+@Composable
+private fun SimpleSelectorField(label:String,options:List<Pair<Long,String>>,selectedId:Long?,onSelect:(Long?)->Unit){var open by remember{mutableStateOf(false)};Box{OutlinedButton(onClick={open=true},modifier=Modifier.fillMaxWidth()){Text(options.firstOrNull{it.first==selectedId}?.second?:label,modifier=Modifier.weight(1f));Icon(Icons.Rounded.ArrowDropDown,null)};DropdownMenu(open,{open=false}){DropdownMenuItem({Text("هیچ‌کدام")},{onSelect(null);open=false});options.forEach{(id,name)->DropdownMenuItem({Text(name)},{onSelect(id);open=false})}}}}
+
+@Composable
+fun EditTransactionDialog(
+    transaction: FinanceTransaction,
+    accounts: List<Account>,
+    people: List<Person>,
+    categories: List<Category>,
+    onDismiss: ()->Unit,
+    onSave: (FinanceTransaction)->Unit
+) {
+    val zone=ZoneId.systemDefault()
+    var amount by remember(transaction.id){mutableStateOf(transaction.amount.toString())}
+    var type by remember(transaction.id){mutableStateOf(transaction.type)}
+    var txDate by remember(transaction.id){mutableStateOf(java.time.Instant.ofEpochMilli(transaction.occurredAt).atZone(zone).toLocalDate())}
+    var reason by remember(transaction.id){mutableStateOf(transaction.reason)}
+    var accountId by remember(transaction.id){mutableStateOf(transaction.accountId)}
+    var categoryId by remember(transaction.id){mutableStateOf(transaction.categoryId)}
+    var personId by remember(transaction.id){mutableStateOf(transaction.personId)}
+    var note by remember(transaction.id){mutableStateOf(transaction.note)}
+    val allowedCats=categories.filter{it.type==type}
+
+    LaunchedEffect(type) {
