@@ -26,9 +26,14 @@ jobs:
 
       - name: Decode and validate source
         run: |
-          mkdir -p project
-          cat source_parts/part00.b64 source_parts/part01.b64 source_parts/part02.b64 source_parts/part03.b64 > hesabyar-source.zip.b64
-          base64 -d hesabyar-source.zip.b64 > hesabyar-source.zip
+          mkdir -p project decoded_parts
+          wc -c source_parts/*.b64
+          sha256sum source_parts/*.b64
+          for f in source_parts/part00.b64 source_parts/part01.b64 source_parts/part02.b64 source_parts/part03.b64; do
+            echo "Decoding $f"
+            base64 -d "$f" > "decoded_parts/$(basename "$f" .b64).bin"
+          done
+          cat decoded_parts/part00.bin decoded_parts/part01.bin decoded_parts/part02.bin decoded_parts/part03.bin > hesabyar-source.zip
           unzip -t hesabyar-source.zip
           unzip -q hesabyar-source.zip -d project
 
