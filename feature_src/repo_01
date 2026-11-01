@@ -1,0 +1,218 @@
+        filter.accountId?.let { where += "t.account_id=?"; args += it.toString() }
+        filter.personId?.let { where += "t.person_id=?"; args += it.toString() }
+        filter.type?.let { where += "t.type=?"; args += it.name }
+        filter.query.trim().takeIf { it.isNotBlank() }?.let { q -> where += "(t.reason LIKE ? OR t.note LIKE ?)"; args += "%$q%"; args += "%$q%" }
+        val clause = if (where.isEmpty()) "" else "WHERE ${where.joinToString(" AND ")}"
+        val sql = """
+            SELECT t.id,t.amount,t.type,t.occurred_at,t.reason,t.account_id,t.category_id,t.person_id,t.source,t.note,t.external_key,
+                   COALESCE(a.name,''),COALESCE(p.name,(SELECT GROUP_CONCAT(pp.name,'، ') FROM person_ledger pl JOIN people pp ON pp.id=pl.person_id WHERE pl.transaction_id=t.id),''),COALESCE(c.name,'')
+            FROM transactions t
+            LEFT JOIN accounts a ON a.id=t.account_id
+            LEFT JOIN people p ON p.id=t.person_id
+            LEFT JOIN categories c ON c.id=t.category_id
+            $clause
+            ORDER BY t.occurred_at DESC,t.id DESC LIMIT $limit
+        """.trimIndent()
+        return dbHelper.readableDatabase.rawQuery(sql, args.toTypedArray()).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    val tx = FinanceTransaction(
+                        id = c.getLong(0), amount = c.getLong(1), type = TransactionType.valueOf(c.getString(2)), occurredAt = c.getLong(3),
+                        reason = c.getString(4), accountId = c.longOrNull(5), categoryId = c.longOrNull(6), personId = c.longOrNull(7),
+                        source = TransactionSource.valueOf(c.getString(8)), note = c.getString(9), externalKey = c.getString(10).orEmpty()
+                    )
+                    add(TransactionRow(tx, c.getString(11), c.getString(12), c.getString(13)))
+                }
+            }
+        }
+    }
+
+    fun dashboard(): DashboardSummary {
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        val dayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
+        val dayEnd = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+        val (monthStart, monthEnd) = DateUtil.jalaliMonthRange(today)
+        fun sum(type: TransactionType, from: Long, to: Long): Long = dbHelper.readableDatabase.rawQuery(
+            "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE type=? AND occurred_at BETWEEN ? AND ?",
+            arrayOf(type.name, from.toString(), to.toString())
+        ).use { c -> c.moveToFirst(); c.getLong(0) }
+        val totalBalance = dbHelper.readableDatabase.rawQuery("SELECT COALESCE(SUM(balance),0) FROM accounts", null).use { c -> c.moveToFirst(); c.getLong(0) }
+        val balances = personBalances()
+        return DashboardSummary(
+            totalBalance = totalBalance,
+            todayIncome = sum(TransactionType.INCOME, dayStart, dayEnd), todayExpense = sum(TransactionType.EXPENSE, dayStart, dayEnd),
+            monthIncome = sum(TransactionType.INCOME, monthStart, monthEnd), monthExpense = sum(TransactionType.EXPENSE, monthStart, monthEnd),
+            receivable = balances.filter { it.net > 0 }.sumOf { it.net }, payable = -balances.filter { it.net < 0 }.sumOf { it.net }
+        )
+    }
+
+    fun personBalances(): List<PersonBalance> {
+        val sql = """
+            SELECT p.id,p.name,p.phone,p.group_name,p.note,COALESCE(SUM(l.amount_signed),0) net
+            FROM people p LEFT JOIN person_ledger l ON p.id=l.person_id
+            GROUP BY p.id ORDER BY p.name COLLATE NOCASE
+        """.trimIndent()
+        return dbHelper.readableDatabase.rawQuery(sql, null).use { c ->
+            buildList { while (c.moveToNext()) add(PersonBalance(Person(c.getLong(0),c.getString(1),c.getString(2),c.getString(3),c.getString(4)), c.getLong(5))) }
+        }
+    }
+
+    fun personLedger(personId: Long): List<PersonLedgerEntry> = dbHelper.readableDatabase.rawQuery(
+        """
+        SELECT l.id,l.person_id,l.amount_signed,l.occurred_at,l.note,l.transaction_id,COALESCE(t.reason,'')
+        FROM person_ledger l
+        LEFT JOIN transactions t ON t.id=l.transaction_id
+        WHERE l.person_id=?
+        ORDER BY l.occurred_at DESC,l.id DESC
+        """.trimIndent(),
+        arrayOf(personId.toString())
+    ).use { c ->
+        buildList {
+            while (c.moveToNext()) {
+                add(
+                    PersonLedgerEntry(
+                        id = c.getLong(0),
+                        personId = c.getLong(1),
+                        amountSigned = c.getLong(2),
+                        occurredAt = c.getLong(3),
+                        note = c.getString(4),
+                        transactionId = c.longOrNull(5),
+                        transactionReason = c.getString(6)
+                    )
+                )
+            }
+        }
+    }
+
+    fun allPersonLedgerEntries(): List<PersonLedgerEntry> = dbHelper.readableDatabase.rawQuery(
+        """
+        SELECT l.id,l.person_id,l.amount_signed,l.occurred_at,l.note,l.transaction_id,COALESCE(t.reason,'')
+        FROM person_ledger l
+        LEFT JOIN transactions t ON t.id=l.transaction_id
+        ORDER BY l.occurred_at DESC,l.id DESC
+        """.trimIndent(),
+        null
+    ).use { c ->
+        buildList {
+            while (c.moveToNext()) {
+                add(
+                    PersonLedgerEntry(
+                        id = c.getLong(0),
+                        personId = c.getLong(1),
+                        amountSigned = c.getLong(2),
+                        occurredAt = c.getLong(3),
+                        note = c.getString(4),
+                        transactionId = c.longOrNull(5),
+                        transactionReason = c.getString(6)
+                    )
+                )
+            }
+        }
+    }
+
+    fun addPersonLedgerEntry(
+        personId: Long,
+        amount: Long,
+        relation: SplitRelation,
+        note: String,
+        occurredAt: Long = System.currentTimeMillis()
+    ): Long {
+        if (amount <= 0) return -1
+        val signed = if (relation == SplitRelation.OWES_ME) amount else -amount
+        val cv = ContentValues().apply {
+            put("person_id", personId)
+            put("amount_signed", signed)
+            put("occurred_at", occurredAt)
+            put("note", note.trim().ifBlank { if (relation == SplitRelation.OWES_ME) "طلب" else "بدهی" })
+            putNull("transaction_id")
+        }
+        return dbHelper.writableDatabase.insert("person_ledger", null, cv)
+    }
+
+    fun settlePerson(personId: Long, amount: Long, theyPaidMe: Boolean, note: String = "تسویه") {
+        if (amount <= 0) return
+        val signed = if (theyPaidMe) -amount else amount
+        val cv = ContentValues().apply {
+            put("person_id", personId)
+            put("amount_signed", signed)
+            put("occurred_at", System.currentTimeMillis())
+            put("note", note.trim().ifBlank { "تسویه" })
+            putNull("transaction_id")
+        }
+        dbHelper.writableDatabase.insert("person_ledger", null, cv)
+    }
+
+    fun addInstallment(item: Installment): Long {
+        val cv = ContentValues().apply {
+            put("title", item.title); put("amount", item.amount); put("due_at", item.dueAt)
+            item.accountId?.let { put("account_id", it) }; item.personId?.let { put("person_id", it) }
+            put("repeat_unit", item.repeatUnit); put("repeat_every", item.repeatEvery); put("reminder_days_before", item.reminderDaysBefore); put("status", item.status.name)
+        }
+        return dbHelper.writableDatabase.insert("installments", null, cv)
+    }
+
+    fun installments(openOnly: Boolean = false): List<Installment> {
+        val where = if (openOnly) "WHERE status='OPEN'" else ""
+        return dbHelper.readableDatabase.rawQuery("SELECT id,title,amount,due_at,account_id,person_id,repeat_unit,repeat_every,reminder_days_before,status FROM installments $where ORDER BY due_at", null).use { c ->
+            buildList { while (c.moveToNext()) add(Installment(c.getLong(0),c.getString(1),c.getLong(2),c.getLong(3),c.longOrNull(4),c.longOrNull(5),c.getString(6),c.getInt(7),c.getInt(8),InstallmentStatus.valueOf(c.getString(9)))) }
+        }
+    }
+
+    fun markInstallmentPaid(id: Long) { dbHelper.writableDatabase.execSQL("UPDATE installments SET status='PAID' WHERE id=?", arrayOf(id)) }
+
+    fun report(from: Long, to: Long, accountId: Long? = null, personId: Long? = null): ReportSummary {
+        val baseWhere = mutableListOf("t.occurred_at BETWEEN ? AND ?")
+        val args = mutableListOf(from.toString(), to.toString())
+        accountId?.let { baseWhere += "t.account_id=?"; args += it.toString() }
+        personId?.let { baseWhere += "(t.person_id=? OR EXISTS (SELECT 1 FROM person_ledger pl WHERE pl.transaction_id=t.id AND pl.person_id=?))"; args += it.toString(); args += it.toString() }
+        val where = baseWhere.joinToString(" AND ")
+        var income = 0L; var expense = 0L
+        dbHelper.readableDatabase.rawQuery("SELECT type,COALESCE(SUM(amount),0) FROM transactions t WHERE $where GROUP BY type", args.toTypedArray()).use { c ->
+            while (c.moveToNext()) if (c.getString(0)=="INCOME") income=c.getLong(1) else expense=c.getLong(1)
+        }
+        val cats = dbHelper.readableDatabase.rawQuery(
+            "SELECT COALESCE(c.name,'بدون دسته'),SUM(t.amount) FROM transactions t LEFT JOIN categories c ON c.id=t.category_id WHERE $where AND t.type='EXPENSE' GROUP BY c.name ORDER BY SUM(t.amount) DESC LIMIT 8",
+            args.toTypedArray()
+        ).use { c -> buildList { while (c.moveToNext()) add(c.getString(0) to c.getLong(1)) } }
+        return ReportSummary(income, expense, income-expense, cats)
+    }
+
+    fun findMatch(amount: Long, type: TransactionType, occurredAt: Long, accountId: Long? = null, toleranceDays: Int = 2): Long? {
+        val tol = toleranceDays * 86_400_000L
+        val accountClause = if (accountId == null) "" else " AND account_id=?"
+        val args = mutableListOf(amount.toString(), type.name, (occurredAt-tol).toString(), (occurredAt+tol).toString())
+        if (accountId != null) args += accountId.toString()
+        args += occurredAt.toString()
+        return dbHelper.readableDatabase.rawQuery(
+            "SELECT id FROM transactions WHERE amount=? AND type=? AND occurred_at BETWEEN ? AND ?$accountClause ORDER BY ABS(occurred_at-?) LIMIT 1",
+            args.toTypedArray()
+        ).use { c -> if (c.moveToFirst()) c.getLong(0) else null }
+    }
+
+    fun saveImport(name: String, entries: List<BankEntry>): ImportBatch {
+        val db = dbHelper.writableDatabase
+        db.beginTransaction()
+        return try {
+            val batchCv = ContentValues().apply { put("name", name); put("imported_at", System.currentTimeMillis()); put("total_rows", entries.size); put("matched_rows", entries.count { it.matchedTransactionId != null }) }
+            val batchId = db.insert("import_batches", null, batchCv)
+            entries.forEach { e ->
+                val cv = ContentValues().apply {
+                    put("batch_id", batchId); put("occurred_at", e.occurredAt); put("amount", e.amount); put("type", e.type.name); put("description", e.description)
+                    e.balanceAfter?.let { put("balance_after", it) }; e.matchedTransactionId?.let { put("matched_transaction_id", it) }; put("fingerprint", e.fingerprint)
+                }
+                db.insertWithOnConflict("bank_entries", null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+            }
+            db.setTransactionSuccessful()
+            ImportBatch(batchId, name, System.currentTimeMillis(), entries.size, entries.count { it.matchedTransactionId != null })
+        } finally { db.endTransaction() }
+    }
+
+    fun recentImportEntries(limit: Int = 200): List<BankEntry> = dbHelper.readableDatabase.rawQuery(
+        "SELECT id,batch_id,occurred_at,amount,type,description,balance_after,matched_transaction_id,fingerprint FROM bank_entries ORDER BY id DESC LIMIT $limit", null
+    ).use { c -> buildList { while (c.moveToNext()) add(BankEntry(c.getLong(0),c.getLong(1),c.getLong(2),c.getLong(3),TransactionType.valueOf(c.getString(4)),c.getString(5),c.longOrNull(6),c.longOrNull(7),c.getString(8))) } }
+
+    private fun Cursor.toAccount() = Account(getLong(0),getString(1),getString(2),getString(3),getString(4),getLong(5),getString(6))
+    private fun Cursor.toPerson() = Person(getLong(0),getString(1),getString(2),getString(3),getString(4))
+    private fun Cursor.longOrNull(index: Int): Long? = if (isNull(index)) null else getLong(index)
+}
