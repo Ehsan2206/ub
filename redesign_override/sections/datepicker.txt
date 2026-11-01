@@ -1,0 +1,50 @@
+@Composable
+private fun DateButton(label:String,date:LocalDate,modifier:Modifier,onDate:(LocalDate)->Unit){
+    var open by remember { mutableStateOf(false) }
+    OutlinedButton(onClick={open=true},modifier=modifier,shape=RoundedCornerShape(16.dp)){
+        Icon(Icons.Rounded.CalendarMonth,null); Spacer(Modifier.width(6.dp)); Text("$label ${DateUtil.formatLocalDate(date)}")
+    }
+    if(open) JalaliDatePickerDialog(date,{open=false},{selected->onDate(selected);open=false})
+}
+
+@Composable
+private fun JalaliDatePickerDialog(initial:LocalDate,onDismiss:()->Unit,onConfirm:(LocalDate)->Unit){
+    val j = remember(initial) { DateUtil.toJalali(initial) }
+    var year by remember { mutableIntStateOf(j.year) }
+    var month by remember { mutableIntStateOf(j.month) }
+    var day by remember { mutableIntStateOf(j.day) }
+    val maxDay = DateUtil.daysInJalaliMonth(year,month)
+    LaunchedEffect(year,month){ if(day>maxDay) day=maxDay }
+    val preview = remember(year,month,day) { runCatching { DateUtil.fromJalali(year,month,day) }.getOrNull() }
+    AlertDialog(
+        onDismissRequest=onDismiss,
+        icon={Icon(Icons.Rounded.CalendarMonth,null)},
+        title={Text("انتخاب تاریخ شمسی")},
+        text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
+            Surface(shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.primaryContainer,modifier=Modifier.fillMaxWidth()){
+                Text(preview?.let{DateUtil.formatLongDate(it)}?:"تاریخ نامعتبر",Modifier.padding(14.dp),fontWeight=FontWeight.Bold)
+            }
+            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                JalaliNumberMenu("سال",year,(year-5..year+5).toList(),{year=it},Modifier.weight(1.2f))
+                JalaliNumberMenu("ماه",month,(1..12).toList(),{month=it},Modifier.weight(1f))
+                JalaliNumberMenu("روز",day,(1..maxDay).toList(),{day=it},Modifier.weight(1f))
+            }
+        }},
+        confirmButton={Button(onClick={preview?.let(onConfirm)},enabled=preview!=null){Text("انتخاب")}},
+        dismissButton={TextButton(onClick=onDismiss){Text("لغو")}}
+    )
+}
+
+@Composable
+private fun JalaliNumberMenu(label:String,value:Int,options:List<Int>,onSelect:(Int)->Unit,modifier:Modifier=Modifier){
+    var open by remember { mutableStateOf(false) }
+    Box(modifier){
+        OutlinedButton(onClick={open=true},modifier=Modifier.fillMaxWidth()){
+            Column(horizontalAlignment=Alignment.CenterHorizontally){Text(label,fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(value.toString(),fontWeight=FontWeight.Bold)}
+        }
+        DropdownMenu(expanded=open,onDismissRequest={open=false}){
+            options.forEach{v->DropdownMenuItem(text={Text(v.toString())},onClick={onSelect(v);open=false})}
+        }
+    }
+}
+
