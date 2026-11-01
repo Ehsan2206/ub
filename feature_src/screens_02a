@@ -1,0 +1,50 @@
+private fun JalaliNumberMenu(label:String,value:Int,options:List<Int>,onSelect:(Int)->Unit,modifier:Modifier=Modifier){
+    var open by remember { mutableStateOf(false) }
+    Box(modifier){
+        OutlinedButton(onClick={open=true},modifier=Modifier.fillMaxWidth()){
+            Column(horizontalAlignment=Alignment.CenterHorizontally){Text(label,fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant);Text(value.toString(),fontWeight=FontWeight.Bold)}
+        }
+        DropdownMenu(expanded=open,onDismissRequest={open=false}){
+            options.forEach{v->DropdownMenuItem(text={Text(v.toString())},onClick={onSelect(v);open=false})}
+        }
+    }
+}
+
+@Composable
+fun MoreScreen(
+    padding:PaddingValues,accounts:List<Account>,people:List<Person>,categories:List<Category>,installments:List<Installment>,bankEntries:List<BankEntry>,
+    onAddAccount:(Account)->Unit,onAddCategory:(Category)->Unit,onAddInstallment:(Installment,Int)->Unit,onPaid:(Long)->Unit,onImport:(Uri,Boolean,Long?)->Unit,onRequestNotification:()->Unit
+){
+    var addAccount by remember{mutableStateOf(false)}; var addCategory by remember{mutableStateOf(false)}; var addInstallment by remember{mutableStateOf(false)}; var valuesAreRial by remember{mutableStateOf(true)}; var importAccountId by remember{mutableStateOf<Long?>(accounts.firstOrNull()?.id)}
+    val picker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->uri?.let{onImport(it,valuesAreRial,importAccountId)}}
+    Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=16.dp,vertical=10.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
+        ScreenTitle("بیشتر", "حساب‌ها، اقساط، دسته‌بندی و ابزارها", Icons.Rounded.Tune)
+        FeatureSection("حساب‌ها",Icons.Rounded.AccountBalanceWallet,action="افزودن",onAction={addAccount=true}){
+            if(accounts.isEmpty()) Text("حسابی ثبت نشده") else accounts.forEach{a->Row(Modifier.fillMaxWidth().padding(vertical=7.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(a.name,fontWeight=FontWeight.Bold);Text("${a.groupName} ${a.cardLast4.takeIf{it.isNotBlank()}?.let{" • ****$it"}.orEmpty()}",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)};Text(Money.format(a.balance),fontWeight=FontWeight.Bold)}}
+        }
+        FeatureSection("دسته‌بندی‌های مالی",Icons.Rounded.Category,action="افزودن",onAction={addCategory=true}){
+            Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(7.dp)){categories.forEach{c->AssistChip(onClick={},label={Text(c.name)},leadingIcon={Text(if(c.type==TransactionType.INCOME)"+" else "−")})}}
+        }
+        FeatureSection("اقساط و یادآوری",Icons.Rounded.EventRepeat,action="قسط جدید",onAction={addInstallment=true}){
+            OutlinedButton(onClick=onRequestNotification,modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.NotificationsActive,null);Spacer(Modifier.width(8.dp));Text("بررسی مجوز اعلان")}
+            installments.filter{it.status==InstallmentStatus.OPEN}.take(5).forEach{i->Row(Modifier.fillMaxWidth().padding(vertical=7.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(i.title,fontWeight=FontWeight.Bold);Text("سررسید ${DateUtil.formatDate(i.dueAt)}",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)};Column(horizontalAlignment=Alignment.End){Text(Money.format(i.amount),fontWeight=FontWeight.Bold);TextButton(onClick={onPaid(i.id)}){Text("پرداخت شد")}}}}
+            if(installments.none{it.status==InstallmentStatus.OPEN}) Text("قسط پرداخت‌نشده‌ای ثبت نشده",color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        FeatureSection("ورود فایل بانک و مغایرت‌گیری",Icons.Rounded.FactCheck){
+            SimpleSelectorField("حساب مورد تطبیق",accounts.map{it.id to it.name},importAccountId){importAccountId=it}
+            Row(verticalAlignment=Alignment.CenterVertically){Text("مبالغ فایل بر حسب ریال است",Modifier.weight(1f));Switch(valuesAreRial,{valuesAreRial=it})}
+            Button(onClick={picker.launch(arrayOf("text/*","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/octet-stream"))},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.UploadFile,null);Spacer(Modifier.width(8.dp));Text("انتخاب CSV / XLSX")}
+            if(bankEntries.isNotEmpty()){
+                val matched=bankEntries.count{it.matchedTransactionId!=null};Text("${bankEntries.size} ردیف اخیر • $matched تطبیق • ${bankEntries.size-matched} مغایرت",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                bankEntries.take(8).forEach{e->Row(Modifier.fillMaxWidth().padding(vertical=5.dp),verticalAlignment=Alignment.CenterVertically){Icon(if(e.matchedTransactionId!=null)Icons.Rounded.CheckCircle else Icons.Rounded.ErrorOutline,null,tint=if(e.matchedTransactionId!=null)MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,modifier=Modifier.size(18.dp));Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f)){Text(e.description,maxLines=1,overflow=TextOverflow.Ellipsis,fontSize=12.sp);Text(DateUtil.formatDate(e.occurredAt),fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)};Text(Money.format(e.amount),fontSize=11.sp,fontWeight=FontWeight.Bold)} }
+            }
+        }
+        FeatureSection("حریم خصوصی",Icons.Rounded.Security){Text("داده‌های مالی، پیامک‌های شناسایی‌شده و فایل‌های بانکی در پایگاه‌داده محلی گوشی نگهداری می‌شوند. این نسخه هیچ سرویس ابری یا تبلیغاتی ندارد.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        Spacer(Modifier.height(90.dp))
+    }
+    if(addAccount)AddAccountDialog({addAccount=false}){onAddAccount(it);addAccount=false}
+    if(addCategory)AddCategoryDialog({addCategory=false}){onAddCategory(it);addCategory=false}
+    if(addInstallment)AddInstallmentDialog(accounts,people,{addInstallment=false}){item,count->onAddInstallment(item,count);addInstallment=false}
+}
+
+@Composable
