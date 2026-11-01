@@ -57,9 +57,15 @@ jobs:
               }
           }
 
-          rootProject.name = "HesabYar2027"
+          rootProject.name = "HesabYar"
           include(":app")
           EOF
+
+      - name: Apply Jalali calendar and redesigned UI
+        run: |
+          python redesign_override/apply_redesign.py
+          ! grep -R -n -E '2027|۲۰۲۷' project/app/src/main || (echo '2027 branding remains in app source' && exit 1)
+          grep -R -n 'JalaliDatePickerDialog\|مدیریت مالی شخصی\|تقویم شمسی' project/app/src/main/java/ir/hesabyar/finance
 
       - name: Locate and install Android SDK 36
         run: |
@@ -88,14 +94,14 @@ jobs:
 
       - name: Copy and verify APK
         run: |
-          cp project/app/build/outputs/apk/debug/app-debug.apk HesabYar2027-original.apk
+          cp project/app/build/outputs/apk/debug/app-debug.apk HesabYar.apk
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          "$SDK_ROOT/build-tools/36.0.0/apksigner" verify --verbose HesabYar2027-original.apk
-          sha256sum HesabYar2027-original.apk
+          "$SDK_ROOT/build-tools/36.0.0/apksigner" verify --verbose HesabYar.apk
+          sha256sum HesabYar.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: HesabYar2027-original
-          path: HesabYar2027-original.apk
+          name: HesabYar
+          path: HesabYar.apk
           if-no-files-found: error
