@@ -1,0 +1,60 @@
+        if (categoryId != null && allowedCats.none { it.id == categoryId }) categoryId = allowedCats.firstOrNull()?.id
+    }
+
+    Dialog(onDismissRequest=onDismiss) {
+        Surface(shape=RoundedCornerShape(30.dp), color=MaterialTheme.colorScheme.surface, modifier=Modifier.fillMaxWidth().heightIn(max=760.dp)) {
+            Column(Modifier.padding(18.dp)) {
+                Row(verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(if(transaction.source==TransactionSource.SMS)"ویرایش تراکنش پیامکی" else "ویرایش تراکنش",fontSize=22.sp,fontWeight=FontWeight.Black)
+                        if(transaction.source==TransactionSource.SMS) {
+                            Text("تغییر مبلغ یا حساب، موجودی را هم خودکار اصلاح می‌کند.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    IconButton(onClick=onDismiss){Icon(Icons.Rounded.Close,null)}
+                }
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        FilterChip(type==TransactionType.EXPENSE,{type=TransactionType.EXPENSE},{Text("هزینه")},leadingIcon={Icon(Icons.Rounded.NorthEast,null)})
+                        FilterChip(type==TransactionType.INCOME,{type=TransactionType.INCOME},{Text("درآمد")},leadingIcon={Icon(Icons.Rounded.SouthWest,null)})
+                    }
+                    OutlinedTextField(amount,{amount=it},modifier=Modifier.fillMaxWidth(),label={Text("مبلغ (تومان)")},singleLine=true)
+                    OutlinedTextField(reason,{reason=it},modifier=Modifier.fillMaxWidth(),label={Text("علت / شرح")},singleLine=true)
+                    DateButton("تاریخ",txDate,Modifier.fillMaxWidth()){txDate=it}
+                    SimpleSelectorField("حساب",accounts.map{it.id to it.name},accountId){accountId=it}
+                    SimpleSelectorField("دسته‌بندی",allowedCats.map{it.id to it.name},categoryId){categoryId=it}
+                    SimpleSelectorField("طرف حساب (اختیاری)",people.map{it.id to it.name},personId){personId=it}
+                    OutlinedTextField(note,{note=it},modifier=Modifier.fillMaxWidth(),label={Text("یادداشت")})
+                }
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick={
+                        onSave(
+                            transaction.copy(
+                                amount=Money.parse(amount),
+                                type=type,
+                                occurredAt=txDate.atTime(12,0).atZone(zone).toInstant().toEpochMilli(),
+                                reason=reason.trim().ifBlank{if(type==TransactionType.EXPENSE)"هزینه" else "درآمد"},
+                                accountId=accountId,
+                                categoryId=categoryId,
+                                personId=personId,
+                                note=note.trim()
+                            )
+                        )
+                    },
+                    enabled=Money.parse(amount)>0,
+                    modifier=Modifier.fillMaxWidth().height(52.dp),
+                    shape=RoundedCornerShape(18.dp)
+                ){Text("ذخیره تغییرات",fontWeight=FontWeight.Bold)}
+            }
+        }
+    }
+}
+
+@Composable
+fun AddTransactionDialog(accounts:List<Account>,people:List<Person>,categories:List<Category>,onDismiss:()->Unit,onSave:(FinanceTransaction,List<SplitDraft>)->Unit){
+    var amount by remember{mutableStateOf("")};var type by remember{mutableStateOf(TransactionType.EXPENSE)};var txDate by remember{mutableStateOf(LocalDate.now(ZoneId.systemDefault()))};var reason by remember{mutableStateOf("")};var accountId by remember{mutableStateOf<Long?>(accounts.firstOrNull()?.id)};var categoryId by remember{mutableStateOf<Long?>(null)};var personId by remember{mutableStateOf<Long?>(null)};var split by remember{mutableStateOf(false)};var note by remember{mutableStateOf("")}
+    val splitAmounts=remember{mutableStateMapOf<Long,String>()};val splitRelations=remember{mutableStateMapOf<Long,SplitRelation>()}
+    val allowedCats=categories.filter{it.type==type}
+    LaunchedEffect(type){categoryId=allowedCats.firstOrNull()?.id}
+    Dialog(onDismissRequest=onDismiss){Surface(shape=RoundedCornerShape(30.dp),color=MaterialTheme.colorScheme.surface,modifier=Modifier.fillMaxWidth().heightIn(max=760.dp)){Column(Modifier.padding(18.dp)){Row(verticalAlignment=Alignment.CenterVertically){Text("ثبت تراکنش",fontSize=22.sp,fontWeight=FontWeight.Black,modifier=Modifier.weight(1f));IconButton(onClick=onDismiss){Icon(Icons.Rounded.Close,null)}};Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
