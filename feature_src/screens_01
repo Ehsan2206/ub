@@ -1,0 +1,260 @@
+        ScreenTitle("تراکنش‌ها", "جستجو و فیلتر همه دریافت‌ها و پرداخت‌ها", Icons.Rounded.ReceiptLong)
+        OutlinedTextField(query, {query=it}, modifier=Modifier.fillMaxWidth(), placeholder={Text("جستجو در علت، حساب یا شخص")}, leadingIcon={Icon(Icons.Rounded.Search,null)}, singleLine=true, shape=RoundedCornerShape(20.dp))
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            FilterChip(type==null,{type=null},{Text("همه")})
+            FilterChip(type==TransactionType.EXPENSE,{type=TransactionType.EXPENSE},{Text("مخارج")})
+            FilterChip(type==TransactionType.INCOME,{type=TransactionType.INCOME},{Text("درآمد")})
+            SimpleSelectorChip("حساب", accounts.map { it.id to it.name }, accountId) { accountId=it }
+            SimpleSelectorChip("شخص", people.map { it.id to it.name }, personId) { personId=it }
+        }
+        Text("${filtered.size} مورد", fontSize=12.sp, color=MaterialTheme.colorScheme.onSurfaceVariant)
+        LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp), contentPadding=PaddingValues(bottom=100.dp)) {
+            items(filtered, key={it.transaction.id}) { row -> TransactionTile(row) { onEdit(row.transaction) } }
+            if (filtered.isEmpty()) item { EmptyCard("نتیجه‌ای با این فیلتر پیدا نشد") }
+        }
+    }
+}
+
+@Composable
+private fun SimpleSelectorChip(label: String, options: List<Pair<Long,String>>, selectedId: Long?, onSelect: (Long?)->Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        AssistChip(onClick={open=true}, label={Text(options.firstOrNull{it.first==selectedId}?.second ?: label)}, leadingIcon={Icon(Icons.Rounded.FilterAlt,null, modifier=Modifier.size(18.dp))})
+        DropdownMenu(expanded=open,onDismissRequest={open=false}) {
+            DropdownMenuItem(text={Text("همه")},onClick={onSelect(null);open=false})
+            options.forEach { (id,name)-> DropdownMenuItem(text={Text(name)},onClick={onSelect(id);open=false}) }
+        }
+    }
+}
+
+@Composable
+fun PeopleScreen(
+    padding: PaddingValues,
+    people: List<PersonBalance>,
+    histories: Map<Long, List<PersonLedgerEntry>>,
+    onAddPerson: (Person)->Unit,
+    onAddLedger: (Long,Long,SplitRelation,String,Long)->Unit,
+    onSettle: (Long,Long,Boolean,String)->Unit
+) {
+    var add by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf<PersonBalance?>(null) }
+    Column(Modifier.padding(padding).fillMaxSize().padding(horizontal=16.dp,vertical=10.dp), verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment=Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { ScreenTitle("دنگ‌ها و اشخاص", "طلب، بدهی و تاریخچه هر نفر", Icons.Rounded.Groups) }
+            FilledTonalIconButton(onClick={add=true}) { Icon(Icons.Rounded.PersonAdd,null) }
+        }
+        LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=90.dp)) {
+            items(people,key={it.person.id}) { p ->
+                val latest = histories[p.person.id].orEmpty().firstOrNull()
+                Surface(Modifier.fillMaxWidth().clickable{selected=p},shape=RoundedCornerShape(24.dp),tonalElevation=1.dp) {
+                    Column(Modifier.padding(16.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                            Surface(shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.primaryContainer) { Icon(Icons.Rounded.Person,null,modifier=Modifier.padding(12.dp)) }
+                            Column(Modifier.weight(1f)) {
+                                Text(p.person.name,fontWeight=FontWeight.Bold)
+                                Text(p.person.groupName,fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Column(horizontalAlignment=Alignment.End) {
+                                Text(when {p.net>0->"طلب من";p.net<0->"بدهی من";else->"تسویه"},fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(Money.format(p.net.absoluteValue),fontWeight=FontWeight.Black,color=when {p.net>0->MaterialTheme.colorScheme.secondary;p.net<0->MaterialTheme.colorScheme.error;else->MaterialTheme.colorScheme.onSurfaceVariant})
+                            }
+                        }
+                        if (latest != null) {
+                            HorizontalDivider()
+                            Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Rounded.History, null, modifier=Modifier.size(16.dp), tint=MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    latest.note.ifBlank { latest.transactionReason.ifBlank { "بدون شرح" } },
+                                    modifier=Modifier.weight(1f), maxLines=1, overflow=TextOverflow.Ellipsis,
+                                    fontSize=11.sp, color=MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(DateUtil.formatDate(latest.occurredAt), fontSize=10.sp, color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+            if(people.isEmpty()) item { EmptyCard("هنوز شخصی اضافه نشده") }
+        }
+    }
+    if(add) AddPersonDialog({add=false}){onAddPerson(it);add=false}
+    selected?.let { p ->
+        PersonBalanceDialog(
+            p = p,
+            history = histories[p.person.id].orEmpty(),
+            onDismiss = { selected=null },
+            onAddLedger = { amount, relation, note, whenAt ->
+                onAddLedger(p.person.id, amount, relation, note, whenAt)
+                selected = null
+            },
+            onSettle = { amount, theyPaid, note ->
+                onSettle(p.person.id, amount, theyPaid, note)
+                selected = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun AddPersonDialog(onDismiss:()->Unit,onSave:(Person)->Unit) {
+    var name by remember{mutableStateOf("")}; var phone by remember{mutableStateOf("")}; var group by remember{mutableStateOf("دوستان")}; var note by remember{mutableStateOf("")}
+    AlertDialog(onDismissRequest=onDismiss,title={Text("شخص جدید")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){OutlinedTextField(name,{name=it},label={Text("نام")});OutlinedTextField(phone,{phone=it},label={Text("شماره تماس")});OutlinedTextField(group,{group=it},label={Text("دسته‌بندی")});OutlinedTextField(note,{note=it},label={Text("یادداشت")})}},confirmButton={Button(onClick={onSave(Person(name=name.trim(),phone=phone.trim(),groupName=group.trim().ifBlank{"سایر"},note=note.trim()))},enabled=name.isNotBlank()){Text("ذخیره")}},dismissButton={TextButton(onClick=onDismiss){Text("لغو")}})
+}
+
+@Composable
+private fun PersonBalanceDialog(
+    p: PersonBalance,
+    history: List<PersonLedgerEntry>,
+    onDismiss: ()->Unit,
+    onAddLedger: (Long,SplitRelation,String,Long)->Unit,
+    onSettle: (Long,Boolean,String)->Unit
+){
+    var showAdd by remember { mutableStateOf(false) }
+    var showSettle by remember { mutableStateOf(false) }
+    Dialog(onDismissRequest=onDismiss) {
+        Surface(shape=RoundedCornerShape(30.dp), color=MaterialTheme.colorScheme.surface, modifier=Modifier.fillMaxWidth().heightIn(max=760.dp)) {
+            Column(Modifier.padding(18.dp), verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(p.person.name, fontSize=22.sp, fontWeight=FontWeight.Black)
+                        Text(
+                            when {
+                                p.net>0 -> "این شخص ${Money.format(p.net)} به شما بدهکار است."
+                                p.net<0 -> "شما ${Money.format(-p.net)} به این شخص بدهکارید."
+                                else -> "حساب شما با این شخص تسویه است."
+                            },
+                            fontSize=12.sp, color=MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick=onDismiss){Icon(Icons.Rounded.Close,null)}
+                }
+
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Button(onClick={showAdd=true}, modifier=Modifier.weight(1f)) {
+                        Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(5.dp)); Text("طلب / بدهی")
+                    }
+                    OutlinedButton(onClick={showSettle=true}, modifier=Modifier.weight(1f), enabled=p.net!=0L) {
+                        Icon(Icons.Rounded.Handshake, null); Spacer(Modifier.width(5.dp)); Text("تسویه")
+                    }
+                }
+
+                Text("تاریخچه", fontSize=17.sp, fontWeight=FontWeight.Black)
+                if (history.isEmpty()) {
+                    EmptyCard("هنوز سابقه‌ای برای این شخص ثبت نشده")
+                } else {
+                    LazyColumn(
+                        modifier=Modifier.weight(1f, fill=false).heightIn(max=420.dp),
+                        verticalArrangement=Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(history, key={it.id}) { entry ->
+                            PersonLedgerRow(entry)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showAdd) {
+        AddPersonLedgerDialog(
+            onDismiss={showAdd=false},
+            onSave={amount,relation,note,whenAt->
+                onAddLedger(amount,relation,note,whenAt)
+                showAdd=false
+            }
+        )
+    }
+    if (showSettle) {
+        SettlePersonDialog(
+            p=p,
+            onDismiss={showSettle=false},
+            onSave={amount,theyPaid,note->
+                onSettle(amount,theyPaid,note)
+                showSettle=false
+            }
+        )
+    }
+}
+
+@Composable
+private fun PersonLedgerRow(entry: PersonLedgerEntry) {
+    val positive = entry.amountSigned > 0
+    Surface(shape=RoundedCornerShape(18.dp), color=MaterialTheme.colorScheme.surfaceVariant) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement=Arrangement.spacedBy(5.dp)) {
+            Row(verticalAlignment=Alignment.CenterVertically) {
+                Icon(
+                    if (positive) Icons.Rounded.CallReceived else Icons.Rounded.CallMade,
+                    null,
+                    modifier=Modifier.size(18.dp),
+                    tint=if (positive) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error
+                )
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    entry.note.ifBlank { entry.transactionReason.ifBlank { if (positive) "طلب" else "بدهی" } },
+                    modifier=Modifier.weight(1f), fontWeight=FontWeight.Bold, maxLines=2, overflow=TextOverflow.Ellipsis
+                )
+                Text(
+                    (if (positive) "+" else "−") + Money.format(entry.amountSigned.absoluteValue),
+                    fontWeight=FontWeight.Black,
+                    color=if (positive) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error
+                )
+            }
+            Row {
+                Text(DateUtil.formatDate(entry.occurredAt), fontSize=10.sp, color=MaterialTheme.colorScheme.onSurfaceVariant, modifier=Modifier.weight(1f))
+                if (entry.transactionId != null) {
+                    Text("مرتبط با تراکنش", fontSize=9.sp, color=MaterialTheme.colorScheme.primary)
+                } else {
+                    Text("ثبت مستقیم / تسویه", fontSize=9.sp, color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddPersonLedgerDialog(
+    onDismiss:()->Unit,
+    onSave:(Long,SplitRelation,String,Long)->Unit
+) {
+    val zone=ZoneId.systemDefault()
+    var amount by remember{mutableStateOf("")}
+    var relation by remember{mutableStateOf(SplitRelation.OWES_ME)}
+    var note by remember{mutableStateOf("")}
+    var date by remember{mutableStateOf(LocalDate.now(zone))}
+    AlertDialog(
+        onDismissRequest=onDismiss,
+        title={Text("ثبت طلب یا بدهی")},
+        text={
+            Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement=Arrangement.spacedBy(7.dp)) {
+                    FilterChip(relation==SplitRelation.OWES_ME,{relation=SplitRelation.OWES_ME},{Text("او به من بدهکار است")})
+                    FilterChip(relation==SplitRelation.I_OWE,{relation=SplitRelation.I_OWE},{Text("من بدهکارم")})
+                }
+                OutlinedTextField(amount,{amount=it},label={Text("مبلغ (تومان)")},singleLine=true)
+                OutlinedTextField(note,{note=it},label={Text("برای چه؟ / شرح")},modifier=Modifier.fillMaxWidth())
+                DateButton("تاریخ",date,Modifier.fillMaxWidth()){date=it}
+            }
+        },
+        confirmButton={
+            Button(
+                onClick={
+                    onSave(
+                        Money.parse(amount), relation, note.trim(),
+                        date.atTime(12,0).atZone(zone).toInstant().toEpochMilli()
+                    )
+                },
+                enabled=Money.parse(amount)>0 && note.isNotBlank()
+            ){Text("ثبت")}
+        },
+        dismissButton={TextButton(onClick=onDismiss){Text("لغو")}}
+    )
+}
+
+@Composable
+private fun SettlePersonDialog(
+    p:PersonBalance,
+    onDismiss:()->Unit,
+    onSave:(Long,Boolean,String)->Unit
+){
+    var amount by remember{mutableStateOf(p.net.absoluteValue.toString())}
+    var theyPaid by remember{mutableStateOf(p.net>=0)}
