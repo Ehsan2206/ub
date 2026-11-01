@@ -69,7 +69,7 @@ fun FinanceApp(vm: FinanceViewModel) {
             modifier = Modifier.fillMaxSize(),
             snackbarHost = { SnackbarHost(snack) },
             bottomBar = {
-                NavigationBar(tonalElevation = 6.dp) {
+                NavigationBar(tonalElevation = 4.dp) {
                     MainTab.entries.forEach { item ->
                         val icon = when (item) {
                             MainTab.HOME -> Icons.Rounded.Home
@@ -82,7 +82,8 @@ fun FinanceApp(vm: FinanceViewModel) {
                             selected = tab == item,
                             onClick = { tab = item },
                             icon = { Icon(icon, null) },
-                            label = { Text(item.title, fontSize = 10.sp) }
+                            label = { Text(item.title, fontSize = 10.sp) },
+                            alwaysShowLabel = true
                         )
                     }
                 }
@@ -90,11 +91,14 @@ fun FinanceApp(vm: FinanceViewModel) {
             floatingActionButtonPosition = FabPosition.Center,
             floatingActionButton = {
                 if (tab == MainTab.HOME || tab == MainTab.TRANSACTIONS) {
-                    LargeFloatingActionButton(
+                    FloatingActionButton(
                         onClick = { showAddTransaction = true },
                         containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    ) { Icon(Icons.Rounded.Add, contentDescription = "ثبت تراکنش") }
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
+                    ) {
+                        Icon(Icons.Rounded.Add, contentDescription = "ثبت تراکنش")
+                    }
                 }
             }
         ) { padding ->
