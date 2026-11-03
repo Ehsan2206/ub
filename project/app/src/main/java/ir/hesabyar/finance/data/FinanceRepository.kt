@@ -10,7 +10,8 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
-class FinanceRepository(context: Context) {
+class FinanceRepository(context: Context) : java.io.Closeable {
+    override fun close() { dbHelper.close() }
     private val dbHelper = FinanceDb(context.applicationContext)
 
     fun accounts(): List<Account> = dbHelper.readableDatabase.rawQuery(
@@ -63,7 +64,7 @@ class FinanceRepository(context: Context) {
             if (id > 0) {
                 tx.accountId?.let { accountId ->
                     val delta = if (tx.type == TransactionType.INCOME) tx.amount else -tx.amount
-                    db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?", arrayOf(delta, accountId, tx.occurredAt))
+                    db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?", arrayOf<Any>(delta, accountId, tx.occurredAt))
                 }
                 splits.forEach { split ->
                     val signed = if (split.relation == SplitRelation.OWES_ME) split.amount else -split.amount
@@ -178,7 +179,7 @@ class FinanceRepository(context: Context) {
         }
     }
 
-    fun markInstallmentPaid(id: Long) { dbHelper.writableDatabase.execSQL("UPDATE installments SET status='PAID' WHERE id=?", arrayOf(id)) }
+    fun markInstallmentPaid(id: Long) { dbHelper.writableDatabase.execSQL("UPDATE installments SET status='PAID' WHERE id=?", arrayOf<Any>(id)) }
 
     fun report(from: Long, to: Long, accountId: Long? = null, personId: Long? = null): ReportSummary {
         val baseWhere = mutableListOf("t.occurred_at BETWEEN ? AND ?", "(t.account_id IS NULL OR t.account_id IN (SELECT id FROM accounts WHERE excluded=0))")
@@ -232,7 +233,7 @@ class FinanceRepository(context: Context) {
     ).use { c -> buildList { while (c.moveToNext()) add(BankEntry(c.getLong(0),c.getLong(1),c.getLong(2),c.getLong(3),TransactionType.valueOf(c.getString(4)),c.getString(5),c.longOrNull(6),c.longOrNull(7),c.getString(8))) } }
 
     fun setAccountExcluded(id: Long, excluded: Boolean) {
-        dbHelper.writableDatabase.execSQL("UPDATE accounts SET excluded=? WHERE id=?", arrayOf(if(excluded) 1 else 0, id))
+        dbHelper.writableDatabase.execSQL("UPDATE accounts SET excluded=? WHERE id=?", arrayOf<Any>(if(excluded) 1 else 0, id))
     }
 
     fun ledger(personId: Long): List<LedgerEntry> = dbHelper.readableDatabase.rawQuery(
@@ -258,10 +259,10 @@ class FinanceRepository(context: Context) {
             db.rawQuery("SELECT amount,type,account_id,occurred_at,external_key FROM transactions WHERE id=?",arrayOf(id.toString())).use { c ->
                 if(c.moveToFirst()) {
                     val delta=if(c.getString(1)=="INCOME") -c.getLong(0) else c.getLong(0)
-                    c.longOrNull(2)?.let { db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?",arrayOf(delta,it,c.getLong(3))) }
-                    c.getString(4)?.takeIf { it.isNotBlank() }?.let { db.execSQL("INSERT OR IGNORE INTO deleted_sms(external_key) VALUES(?)",arrayOf(it)) }
+                    c.longOrNull(2)?.let { db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?",arrayOf<Any>(delta,it,c.getLong(3))) }
+                    c.getString(4)?.takeIf { it.isNotBlank() }?.let { db.execSQL("INSERT OR IGNORE INTO deleted_sms(external_key) VALUES(?)",arrayOf<Any>(it)) }
                     db.delete("person_ledger","transaction_id=?",arrayOf(id.toString()))
-                    db.execSQL("UPDATE bank_entries SET matched_transaction_id=NULL WHERE matched_transaction_id=?",arrayOf(id))
+                    db.execSQL("UPDATE bank_entries SET matched_transaction_id=NULL WHERE matched_transaction_id=?",arrayOf<Any>(id))
                     db.delete("transactions","id=?",arrayOf(id.toString()))
                 }
             }
@@ -280,7 +281,7 @@ class FinanceRepository(context: Context) {
                 ?: accounts().filter { it.bankName==p.bankName && it.cardLast4==p.accountLast4 && p.accountLast4.isNotBlank() && it.smsIdentity.isBlank() }.singleOrNull()
             if(existing?.excluded==true) return false
             val accountId=existing?.id ?: addAccount(Account(name=p.bankName + if(p.accountLast4.isBlank()) " • بدون شناسه" else " • " + p.accountLast4,bankName=p.bankName,cardLast4=p.accountLast4,smsIdentity=p.accountIdentity))
-            if(existing!=null && existing.smsIdentity.isBlank()) db.execSQL("UPDATE accounts SET sms_identity=? WHERE id=?",arrayOf(p.accountIdentity,accountId))
+            if(existing!=null && existing.smsIdentity.isBlank()) db.execSQL("UPDATE accounts SET sms_identity=? WHERE id=?",arrayOf<Any>(p.accountIdentity,accountId))
             var changed=existing==null
             if(!snapshotOnly && p.amountRial!=null && p.type!=null) {
                 val id=addTransaction(FinanceTransaction(amount=p.amountRial,type=p.type,occurredAt=p.timestamp,reason=p.reason,accountId=accountId,categoryId=null,personId=null,source=TransactionSource.SMS,externalKey=p.externalKey))
@@ -290,7 +291,7 @@ class FinanceRepository(context: Context) {
                 val anchor=db.rawQuery("SELECT balance_at FROM accounts WHERE id=?",arrayOf(accountId.toString())).use { it.moveToFirst();it.getLong(0) }
                 if(p.timestamp>anchor) {
                     val later=db.rawQuery("SELECT COALESCE(SUM(CASE WHEN type='INCOME' THEN amount ELSE -amount END),0) FROM transactions WHERE account_id=? AND occurred_at>?",arrayOf(accountId.toString(),p.timestamp.toString())).use { it.moveToFirst(); it.getLong(0) }
-                    db.execSQL("UPDATE accounts SET balance=?,balance_at=? WHERE id=?",arrayOf(Math.addExact(balance,later),p.timestamp,accountId))
+                    db.execSQL("UPDATE accounts SET balance=?,balance_at=? WHERE id=?",arrayOf<Any>(Math.addExact(balance,later),p.timestamp,accountId))
                     changed=true
                 }
             }

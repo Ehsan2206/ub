@@ -129,5 +129,5 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun monthRange(): Pair<Long,Long> = DateUtil.jalaliMonthRange()
 
-    override fun onCleared() { executor.shutdown(); super.onCleared() }
+    override fun onCleared() { executor.execute { repo.close() }; executor.shutdown(); super.onCleared() }
 }

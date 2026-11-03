@@ -23,6 +23,9 @@
 منابع بررسی سرشماره‌ها (۳ نوامبر ۲۰۲۶):
 - https://greenpepper.ir/sms-numbers/ (فهرست عمومی؛ برخی کدها قدیمی‌اند)
 - https://telegram.me/s/bankmelli_ir?after=7789 (کانال بانک ملی؛ تغییر ساپتا)
+- https://t.me/s/rqbankofficial?q=%23%D8%B1%D9%85%D8%B2_%D9%BE%D9%88%DB%8C%D8%A7 (رسالت؛ سامانه پیامکی 20004747)
+- https://t.me/s/ShahrBankOfficial (سرشماره 200035)
+- https://www.linkedin.com/posts/dec24_%D8%AF%DB%8C%D8%A8%D8%A7%DA%A9%D8%A7%D8%B1%D8%AA%D8%A7%D8%B9%D8%AA%D8%A8%D8%A7%D8%B1%DB%8C-%D8%AA%D8%AC%D8%A7%D8%B1%D8%AA%D8%A7%D9%84%DA%A9%D8%AA%D8%B1%D9%88%D9%86%DB%8C%DA%A9%D8%AF%DB%8C-%D8%A8%D8%A7%D9%86%DA%A9%D8%AF%DB%8C-activity-7358052022685769730-c6Wk (تجارت الکترونیک دی؛ 3000272601)
 - https://cbi.ir/BanksInstitutions/BankInstitute.aspx (مرجع مجوز؛ در زمان بررسی قابل دریافت نبود)
 
 سرشماره‌ها نشانه‌ای برای دسته‌بندی محلی‌اند و گواهی اصالت پیامک نیستند. هر مؤسسه تازه را می‌توان بدون اتصال اینترنت با سرشماره اختصاصی افزود.

@@ -23,15 +23,19 @@ object SmsParser {
         val balance=balanceMatch?.let { rial(it.groupValues[1],it.groupValues[2]) }
         val withoutBalance=balancePattern.replace(text, " ")
         val op=operation.find(withoutBalance)
-        val type=op?.let { if(it.value in listOf("واریز","واریزی","بستانکار","دریافت","انتقال از","deposit")) TransactionType.INCOME else TransactionType.EXPENSE }
-        val amountMatch=Regex("(?:مبلغ(?: تراکنش)?|برداشت|خرید|واریزی?|پرداخت|بستانکار|بدهکار|کسر|amount)[ \\t]*[:：=]?[ \\t]*($NUMBER)[ \\t]*($UNIT)?",RegexOption.IGNORE_CASE).find(withoutBalance)
+        val typeByWord=op?.let { if(it.value.lowercase() in listOf("واریز","واریزی","بستانکار","دریافت","انتقال از","deposit")) TransactionType.INCOME else TransactionType.EXPENSE }
+        val amountMatch=Regex("(?:مبلغ(?: تراکنش)?|برداشت|خرید|واریزی?|پرداخت|بستانکار|بدهکار|کسر|amount)\\s*[:：=]?\\s*($NUMBER)[ \\t]*($UNIT)?",RegexOption.IGNORE_CASE).find(withoutBalance)
             ?: Regex("($NUMBER)[ \\t]*($UNIT)",RegexOption.IGNORE_CASE).find(withoutBalance)
-        val amount=if(op==null) null else amountMatch?.let { rial(it.groupValues[1],it.groupValues[2]) }?.takeIf { it>0 }
+        val signedLine=Regex("(?m)^[ \t]*([+−-])($NUMBER)[ \t]*($UNIT)?[ \t]*$",RegexOption.IGNORE_CASE).find(withoutBalance)
+        val type=typeByWord ?: signedLine?.let { if(it.groupValues[1]=="+") TransactionType.INCOME else TransactionType.EXPENSE }
+        val amount=if(type==null) null else (amountMatch?.let { rial(it.groupValues[1],it.groupValues[2]) }
+            ?: signedLine?.let { rial(it.groupValues[2],it.groupValues[3]) })?.takeIf { it>0 }
         if(balance==null && (amount==null || type==null)) return null
         // Prefer the account/deposit identifier. Retain the complete token to avoid merging equal suffixes.
         val token=Regex("(?:شماره[ \\t]*)?(?:حساب|سپرده|کارت)[ \\t]*[:：]?[ \\t]*([0-9*xX]+(?:[.\\-/][0-9*xX]+)*)").find(text)?.groupValues?.get(1)
-        val identity=token?.lowercase() ?: "sender:${BankRegistry.senderKey(sender)}"
-        val last4=token?.filter { it.isDigit() }?.takeLast(4).orEmpty()
+        val sourceToken=token ?: Regex("(?:^|\\n)از[ \\t]*:[ \\t]*([0-9]+(?:[.\\-/][0-9]+)*)").find(text)?.groupValues?.get(1)
+        val identity=sourceToken?.lowercase() ?: "sender:${BankRegistry.senderKey(sender)}"
+        val last4=sourceToken?.filter { it.isDigit() }?.takeLast(4).orEmpty()
         val key=MessageDigest.getInstance("SHA-256").digest("$sender|$timestamp|$body".toByteArray()).joinToString(""){"%02x".format(it)}
         return ParsedSms(amount,type,if(type==TransactionType.INCOME)"واریز • $bank" else "برداشت • $bank",last4,key,bank,identity,balance,timestamp)
     }

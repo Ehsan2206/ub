@@ -84,7 +84,7 @@ fun FinanceApp(vm: FinanceViewModel) {
                             MainTab.TRANSACTIONS -> Icons.Rounded.ReceiptLong
                             MainTab.PEOPLE -> Icons.Rounded.Groups
                             MainTab.REPORTS -> Icons.Rounded.BarChart
-                            MainTab.MORE -> Icons.Rounded.MoreHoriz
+                            MainTab.MORE -> Icons.Rounded.AccountBalance
                         }
                         NavigationBarItem(
                             selected = tab == item,
