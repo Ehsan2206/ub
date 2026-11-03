@@ -83,6 +83,57 @@ class FinanceRepository(context: Context) : java.io.Closeable {
         } finally { db.endTransaction() }
     }
 
+    fun transaction(id: Long): FinanceTransaction? = dbHelper.readableDatabase.rawQuery(
+        "SELECT id,amount,type,occurred_at,reason,account_id,category_id,person_id,source,note,external_key FROM transactions WHERE id=?", arrayOf(id.toString())
+    ).use { c -> if(c.moveToFirst()) FinanceTransaction(c.getLong(0),c.getLong(1),TransactionType.valueOf(c.getString(2)),c.getLong(3),c.getString(4),c.longOrNull(5),c.longOrNull(6),c.longOrNull(7),TransactionSource.valueOf(c.getString(8)),c.getString(9),c.getString(10).orEmpty()) else null }
+
+    fun transactionSplits(id: Long): List<SplitDraft> = dbHelper.readableDatabase.rawQuery(
+        "SELECT person_id,amount_signed FROM person_ledger WHERE transaction_id=? ORDER BY id", arrayOf(id.toString())
+    ).use { c -> buildList { while(c.moveToNext()) { val signed=c.getLong(1); add(SplitDraft(c.getLong(0),kotlin.math.abs(signed),if(signed>=0) SplitRelation.OWES_ME else SplitRelation.I_OWE)) } } }
+
+    fun updateTransaction(tx: FinanceTransaction, splits: List<SplitDraft>) {
+        require(tx.amount>0) { "مبلغ باید بیشتر از صفر باشد" }
+        require(splits.all { it.amount>0 } && splits.map { it.personId }.distinct().size==splits.size) { "سهم اشخاص معتبر نیست" }
+        val db=dbHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            val old=transaction(tx.id) ?: error("تراکنش پیدا نشد")
+            fun exists(table:String,id:Long)=db.rawQuery("SELECT 1 FROM $table WHERE id=?",arrayOf(id.toString())).use { it.moveToFirst() }
+            require(tx.accountId==null || exists("accounts",tx.accountId)) { "حساب انتخاب‌شده پیدا نشد" }
+            require(tx.personId==null || exists("people",tx.personId)) { "شخص انتخاب‌شده پیدا نشد" }
+            require(splits.all { exists("people",it.personId) }) { "شخص انتخاب‌شده پیدا نشد" }
+            require(tx.categoryId==null || db.rawQuery("SELECT 1 FROM categories WHERE id=? AND type=?",arrayOf(tx.categoryId.toString(),tx.type.name)).use { it.moveToFirst() }) { "دسته‌بندی با نوع تراکنش هماهنگ نیست" }
+            // Reverse the old contribution and apply the new one against each account's own snapshot.
+            old.accountId?.let { id ->
+                val reverse=if(old.type==TransactionType.INCOME) -old.amount else old.amount
+                db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?",arrayOf<Any>(reverse,id,old.occurredAt))
+            }
+            val cv=ContentValues().apply {
+                put("amount",tx.amount);put("type",tx.type.name);put("occurred_at",tx.occurredAt);put("reason",tx.reason);put("note",tx.note)
+                if(tx.accountId==null) putNull("account_id") else put("account_id",tx.accountId)
+                if(tx.categoryId==null) putNull("category_id") else put("category_id",tx.categoryId)
+                if(tx.personId==null || splits.isNotEmpty()) putNull("person_id") else put("person_id",tx.personId)
+                // Keep the original fingerprint for deduplication; user edits must survive future SMS scans.
+                put("source",if(old.source==TransactionSource.SMS) TransactionSource.MANUAL.name else old.source.name)
+            }
+            check(db.update("transactions",cv,"id=?",arrayOf(tx.id.toString()))==1)
+            tx.accountId?.let { id ->
+                val delta=if(tx.type==TransactionType.INCOME) tx.amount else -tx.amount
+                db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?",arrayOf<Any>(delta,id,tx.occurredAt))
+            }
+            db.delete("person_ledger","transaction_id=?",arrayOf(tx.id.toString()))
+            splits.forEach { split ->
+                val lv=ContentValues().apply {
+                    put("person_id",split.personId);put("amount_signed",if(split.relation==SplitRelation.OWES_ME) split.amount else -split.amount)
+                    put("occurred_at",tx.occurredAt);put("note",tx.reason.ifBlank { "حساب اشخاص" });put("transaction_id",tx.id)
+                }
+                db.insertOrThrow("person_ledger",null,lv)
+            }
+            db.execSQL("UPDATE bank_entries SET matched_transaction_id=NULL WHERE matched_transaction_id=?",arrayOf<Any>(tx.id))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
     fun transactionByExternalKey(key: String): Long? {
         if (key.isBlank()) return null
         return dbHelper.readableDatabase.rawQuery("SELECT id FROM transactions WHERE external_key=? LIMIT 1", arrayOf(key)).use { c -> if (c.moveToFirst()) c.getLong(0) else null }

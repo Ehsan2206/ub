@@ -120,9 +120,10 @@ fun FinanceApp(vm: FinanceViewModel) {
                     onRequestSms = { showSmsDisclosure = true },
                     onOpenTransactions = { tab = MainTab.TRANSACTIONS },
                     onOpenPeople = { tab = MainTab.PEOPLE },
-                    onImportSms = { openHistory() }
+                    onImportSms = { openHistory() },
+                    onEditTransaction=vm::beginEdit
                 )
-                MainTab.TRANSACTIONS -> TransactionsScreen(padding, vm.transactions, vm.accounts, vm.people.map { it.person },vm::deleteTransaction)
+                MainTab.TRANSACTIONS -> TransactionsScreen(padding, vm.transactions, vm.accounts, vm.people.map { it.person },vm::deleteTransaction,vm::beginEdit)
                 MainTab.PEOPLE -> PeopleScreen(padding,vm.people,vm.ledgers,vm::addPerson,vm::addLedger,vm::deleteLedger)
                 MainTab.REPORTS -> ReportsScreen(padding, vm.accounts, vm.people.map { it.person }, vm.report, vm::loadReport)
                 MainTab.MORE -> MoreScreen(
@@ -151,6 +152,10 @@ fun FinanceApp(vm: FinanceViewModel) {
         if(vm.busy && !showSmsImport) LinearProgressIndicator(modifier=Modifier.fillMaxSize().wrapContentHeight(androidx.compose.ui.Alignment.Top))
         if(showSmsImport) SmsImportDialog(vm.busy,vm.senderRules,{showSmsImport=false},vm::importSms,vm::saveSender,vm::removeSender)
         vm.smsResult?.let { result -> AlertDialog(onDismissRequest=vm::clearSmsResult,title={Text("نتیجه بررسی پیامک‌ها")},text={Text(result)},confirmButton={Button(onClick=vm::clearSmsResult){Text("متوجه شدم")}}) }
+        vm.editingTransaction?.let { tx ->
+            AddTransactionDialog(accounts=vm.accounts,people=vm.people.map{it.person},categories=vm.categories,
+                onDismiss=vm::cancelEdit,onSave=vm::saveEdit,initial=tx,initialSplits=vm.editingSplits,busy=vm.busy)
+        }
         if (showAddTransaction) {
             AddTransactionDialog(
                 accounts = vm.accounts,

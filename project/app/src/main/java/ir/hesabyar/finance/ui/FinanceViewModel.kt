@@ -24,6 +24,8 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     private var reportAccount:Long?=null
     private var reportPerson:Long?=null
 
+    var editingTransaction by mutableStateOf<FinanceTransaction?>(null); private set
+    var editingSplits by mutableStateOf<List<SplitDraft>>(emptyList()); private set
     var ledgers by mutableStateOf<Map<Long,List<LedgerEntry>>>(emptyMap()); private set
     var senderRules by mutableStateOf<Map<String,String>>(emptyMap()); private set
     var smsResult by mutableStateOf<String?>(null); private set
@@ -40,6 +42,16 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
 
     init { refresh() }
 
+    fun beginEdit(id:Long)=runBg {
+        val tx=repo.transaction(id) ?: error("تراکنش پیدا نشد")
+        val splits=repo.transactionSplits(id)
+        main.post { editingSplits=splits;editingTransaction=tx }
+    }
+    fun cancelEdit() { if(!busy) { editingTransaction=null;editingSplits=emptyList() } }
+    fun saveEdit(tx:FinanceTransaction,splits:List<SplitDraft>)=runBg("تغییرات تراکنش ذخیره شد") {
+        repo.updateTransaction(tx,splits);refreshDirect()
+        main.post { editingTransaction=null;editingSplits=emptyList() }
+    }
     fun deleteTransaction(id:Long)=runBg("تراکنش حذف شد") { repo.deleteTransaction(id); refreshDirect() }
     fun excludeAccount(id:Long,excluded:Boolean)=runBg { repo.setAccountExcluded(id,excluded); refreshDirect() }
     fun saveSender(sender:String,bank:String)=runBg("سرشماره ذخیره شد") { ir.hesabyar.finance.sms.SmsImporter.saveSender(getApplication(),sender,bank); refreshDirect() }

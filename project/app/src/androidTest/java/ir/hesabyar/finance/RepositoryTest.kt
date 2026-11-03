@@ -77,6 +77,44 @@ class RepositoryTest {
         assertEquals(1,r.transactions().size);assertNotNull(r.transactions().single().transaction.accountId)
         assertEquals(900L,r.accounts().first{it.bankName.isNotBlank()}.balance)
     }
+    @Test fun editReversesOldAccountAndReplacesPeopleSplitsAtomically() {
+        FinanceRepository(context).use { r ->
+            val a=r.addAccount(Account(name="حساب اول",balance=1000));val b=r.addAccount(Account(name="حساب دوم",balance=2000))
+            val p1=r.addPerson(Person(name="شخص اول"));val p2=r.addPerson(Person(name="شخص دوم"))
+            val id=r.addTransaction(FinanceTransaction(amount=100,type=TransactionType.EXPENSE,occurredAt=10,reason="قبلی",accountId=a,categoryId=null,personId=null,source=TransactionSource.MANUAL),listOf(SplitDraft(p1,50,SplitRelation.OWES_ME)))
+            val edited=r.transaction(id)!!.copy(amount=250,type=TransactionType.INCOME,occurredAt=20,reason="اصلاح‌شده",accountId=b,note="یادداشت جدید")
+            val shares=listOf(SplitDraft(p2,100,SplitRelation.I_OWE))
+            r.updateTransaction(edited,shares)
+            assertEquals(1000L,r.accounts().first{it.id==a}.balance);assertEquals(2250L,r.accounts().first{it.id==b}.balance)
+            assertEquals(0L,r.personBalances().first{it.person.id==p1}.net);assertEquals(-100L,r.personBalances().first{it.person.id==p2}.net)
+            assertEquals("اصلاح‌شده",r.ledger(p2).single().note);assertEquals(20L,r.ledger(p2).single().occurredAt)
+            assertEquals(edited,r.transaction(id));assertEquals(shares,r.transactionSplits(id))
+            r.updateTransaction(edited,shares);assertEquals(2250L,r.accounts().first{it.id==b}.balance)
+            try {r.updateTransaction(edited.copy(accountId=999999),shares);fail("missing account accepted")} catch(expected:IllegalArgumentException) { }
+            assertEquals(2250L,r.accounts().first{it.id==b}.balance);assertEquals(edited,r.transaction(id))
+            r.updateTransaction(edited.copy(accountId=null,personId=p1),emptyList())
+            assertEquals(2000L,r.accounts().first{it.id==b}.balance);assertEquals(0L,r.personBalances().first{it.person.id==p2}.net)
+            assertTrue(r.transactionSplits(id).isEmpty());assertEquals(p1,r.transaction(id)!!.personId)
+            assertEquals(1,r.transactions().size)
+        }
+    }
+    @Test fun editSmsKeepsSnapshotAndFingerprintAndSurvivesRescan() {
+        FinanceRepository(context).use { r ->
+            r.acceptSms(p(100,100,900))
+            val anchored=r.transactions().single().transaction
+            r.updateTransaction(anchored.copy(amount=200),emptyList())
+            assertEquals(900L,r.accounts().first{it.bankName.isNotBlank()}.balance)
+            r.acceptSms(p(110,100));val future=r.transactions().first{it.transaction.occurredAt==110L}.transaction
+            r.updateTransaction(future.copy(amount=150),emptyList())
+            assertEquals(750L,r.accounts().first{it.bankName.isNotBlank()}.balance)
+            assertEquals(future.externalKey,r.transaction(future.id)!!.externalKey)
+            r.acceptSms(p(110,100));assertEquals(150L,r.transaction(future.id)!!.amount)
+            r.updateTransaction(r.transaction(future.id)!!.copy(accountId=null),emptyList())
+            r.acceptSms(p(110,100));assertNull(r.transaction(future.id)!!.accountId)
+            assertEquals(900L,r.accounts().first{it.bankName.isNotBlank()}.balance)
+            assertEquals(2,r.transactions().size)
+        }
+    }
     @Test fun migrationConvertsTomanExactlyOnce() {
         // Construct the actual v1 schema by creating current tables and rebuilding only accounts.
         val helper=FinanceDb(context);val db=helper.writableDatabase

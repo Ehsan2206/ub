@@ -7,6 +7,8 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.*
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.*
+import ir.hesabyar.finance.data.*
 import org.junit.runner.RunWith
 import java.io.File
 import android.graphics.Bitmap
@@ -37,6 +39,41 @@ class UiSmokeTest {
             compose.onNodeWithText("حساب‌ها",substring=false).performClick()
             compose.onNodeWithText("حساب‌ها و ابزارها").assertExists()
             screenshot("accounts")
+        }
+    }
+    @Test fun editTransactionPrefillsSavesAndCancelKeepsData() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        context.deleteDatabase("hesabyar.db")
+        val time=System.currentTimeMillis()
+        var account=0L;var id=0L
+        FinanceRepository(context).use { r ->
+            account=r.addAccount(Account(name="حساب آزمون ویرایش",balance=1000))
+            id=r.addTransaction(FinanceTransaction(amount=100,type=TransactionType.EXPENSE,occurredAt=time,reason="خرید آزمون",accountId=account,categoryId=null,personId=null,source=TransactionSource.MANUAL,note="یادداشت قبلی"))
+        }
+        ActivityScenario.launch(MainActivity::class.java).use {
+            compose.waitUntil(10000){compose.onAllNodesWithContentDescription("ویرایش خرید آزمون").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("تراکنش‌ها",substring=false).performClick()
+            compose.onNodeWithContentDescription("ویرایش خرید آزمون").performClick()
+            compose.waitUntil(10000){compose.onAllNodesWithText("ویرایش تراکنش").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("100",substring=false).assertExists()
+            compose.onNodeWithText("مبلغ (ریال)").performTextClearance()
+            compose.onNodeWithText("مبلغ (ریال)").performTextInput("200")
+            compose.onNodeWithText("علت / شرح").performTextClearance()
+            compose.onNodeWithText("علت / شرح").performTextInput("خرید ویرایش شده")
+            screenshot("edit")
+            compose.onNodeWithText("ذخیره تغییرات").performClick()
+            compose.waitUntil(10000){compose.onAllNodesWithText("ویرایش تراکنش").fetchSemanticsNodes().isEmpty()}
+            FinanceRepository(context).use { r ->
+                assertEquals(200L,r.transaction(id)!!.amount);assertEquals(time,r.transaction(id)!!.occurredAt)
+                assertEquals("یادداشت قبلی",r.transaction(id)!!.note);assertNull(r.transaction(id)!!.categoryId)
+                assertEquals(800L,r.accounts().first{it.id==account}.balance)
+            }
+            compose.onNodeWithContentDescription("ویرایش خرید ویرایش شده").performClick()
+            compose.waitUntil(10000){compose.onAllNodesWithText("ویرایش تراکنش").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithText("مبلغ (ریال)").performTextClearance()
+            compose.onNodeWithText("مبلغ (ریال)").performTextInput("999")
+            compose.onNodeWithContentDescription("بستن ویرایش تراکنش").performClick()
+            FinanceRepository(context).use { r ->assertEquals(200L,r.transaction(id)!!.amount);assertEquals(800L,r.accounts().first{it.id==account}.balance)}
         }
     }
     private fun screenshot(name:String) {
