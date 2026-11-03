@@ -11,13 +11,13 @@ over = Path("redesign_override")
 if not root.exists():
     raise SystemExit("project directory not found")
 
+chunk_dir = over / "v2_chunks"
+chunk_names = [f"chunk_{i:02d}" for i in range(16)] + ["chunk_16a", "chunk_16b"]
 parts = []
-for i in range(1, 5):
-    path = over / f"v2_payload_{i}.b64"
+for name in chunk_names:
+    path = chunk_dir / name
     if not path.exists():
-        raise SystemExit(f"Missing payload part: {path}")
-    # Base64 permits whitespace; strip it so wrapping or an accidental space
-    # cannot corrupt the reconstructed archive.
+        raise SystemExit(f"Missing payload chunk: {path}")
     parts.append("".join(path.read_text().split()))
 
 encoded = "".join(parts)
@@ -25,15 +25,14 @@ raw = base64.b64decode(encoded, validate=True)
 expected_sha256 = "5a6ccd47b10958b589f88a7479cd5db68c19cab5d8b811345831d3a3670c764b"
 actual_sha256 = hashlib.sha256(raw).hexdigest()
 if actual_sha256 != expected_sha256:
-    raise SystemExit(
-        f"HesabYar v2 payload checksum mismatch: {actual_sha256} != {expected_sha256}"
-    )
+    raise SystemExit(f"HesabYar v2 payload checksum mismatch: {actual_sha256} != {expected_sha256}")
 
 with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-    archive.testzip()
+    bad = archive.testzip()
+    if bad:
+        raise SystemExit(f"Corrupt payload member: {bad}")
     archive.extractall(root)
 
-# Optional post-payload hotfix directory. Files placed here mirror project paths.
 fix_root = over / "v2_fix"
 if fix_root.exists():
     for src in fix_root.rglob("*"):
