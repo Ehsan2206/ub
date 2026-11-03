@@ -68,5 +68,12 @@ class SmsParserTest {
         assertTrue(AccountIdentity.matches("6037*1234","6037999911111234"))
         assertFalse(AccountIdentity.matches("11111234","22221234"))
     }
+    @Test fun spacedCardNumbersAreNotReducedToTheirSharedPrefix() {
+        val a=SmsParser.parse("TejaratBank","برداشت100ریال\nکارت:6037 9900 1111 1234",1)!!
+        val b=SmsParser.parse("TejaratBank","برداشت100ریال\nکارت:6037 9900 2222 1234",2)!!
+        assertEquals("6037990011111234",a.accountIdentity);assertNotEquals(a.accountIdentity,b.accountIdentity)
+        val c=SmsParser.parse("TejaratBank","برداشت100ریال\nکارت:****1234",3)!!
+        assertEquals("*1234",c.accountIdentity)
+    }
     @Test fun overflowSkipped() {assertNull(SmsParser.parse("200033","واریز:9223372036854775807 تومان",10))}
 }

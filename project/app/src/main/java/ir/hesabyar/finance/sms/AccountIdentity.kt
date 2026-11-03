@@ -17,11 +17,13 @@ object AccountIdentity {
         return Regex("^"+mask.split('*').joinToString("[0-9]*"){Regex.escape(it)}+"$").matches(full)
     }
     fun tokens(text:String):List<String> {
-        fun find(labels:String):List<String> = Regex("(?:شماره[ \\t]*)?(?:$labels)[ \\t]*[:：]?[ \\t]*([0-9*xX]+(?:[.\\-/][0-9*xX]+)*)")
+        fun find(labels:String):List<String> = Regex("(?:شماره[ \\t]*)?(?:$labels)[ \\t]*[:：]?[ \\t]*([0-9*xX]+(?:[.\\-/ \\t]+[0-9*xX]+)*)")
             .findAll(text).filter { m ->
                 val before=text.substring((m.range.first-20).coerceAtLeast(0),m.range.first)
                 !Regex("(?:به|مقصد|ذینفع)[ \\t]*$").containsMatchIn(before)
-            }.map { normalize(it.groupValues[1]) }.filter{it.count(Char::isDigit)>=4}.toList()
+            }.map { normalize(it.groupValues[1]) }.filter{it.count(Char::isDigit)>=4 && ('*' !in it || it.takeLastWhile(Char::isDigit).length>=4)}
+            .map { if(labels=="کارت" && it.all(Char::isDigit) && it.length==4) "*$it" else it }
+            .filter { labels!="کارت" || '*' in it || it.length==16 }.toList()
         val account=find("حساب|سپرده").take(1)
         val card=find("کارت").take(1)
         val source=if(account.isEmpty()) Regex("(?:^|\\n)از[ \\t]*:[ \\t]*([0-9]+(?:[.\\-/][0-9]+)*)").find(text)?.groupValues?.get(1)?.let{listOf(normalize(it))}.orEmpty() else emptyList()

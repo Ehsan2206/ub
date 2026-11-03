@@ -474,7 +474,7 @@ fun AddTransactionDialog(
         if(categoryId!=null && allowedCats.none{it.id==categoryId}) categoryId=null
         if(initial==null && categoryId==null) categoryId=allowedCats.firstOrNull()?.id
     }
-    val valid=Money.parse(amount)>0 && Money.parse(roundAmount) in 0..Money.parse(amount) && (!split || (splitAmounts.isNotEmpty() && splitAmounts.values.all{Money.parse(it)>0}))
+    val valid=Money.parse(amount)>0 && (type!=TransactionType.EXPENSE || Money.parse(roundAmount) in 0..Money.parse(amount)) && (!split || (splitAmounts.isNotEmpty() && splitAmounts.values.all{Money.parse(it)>0}))
     Dialog(onDismissRequest={if(!busy)onDismiss()}) {
         Surface(shape=RoundedCornerShape(28.dp),modifier=Modifier.fillMaxWidth().heightIn(max=760.dp)) {
             Column(Modifier.padding(18.dp)) {

@@ -160,6 +160,18 @@ class RepositoryTest {
             assertEquals(640000L,r.report(0,300).expense);assertEquals(10000L,r.transaction(tx.id)!!.internalAmount)
         }
     }
+    @Test fun rescanCorrectsOldSamanClassificationForBluWithoutDoubleBalance() {
+        val parsed=SmsParser.parse("20000","بلو\nبرداشت رند\nمشتری عزیز،640,000 ریال از حساب شما پرید.\nو 10,000 ریال هم رند شد.\nموجودی:7,642,736 ریال",200)!!
+        FinanceRepository(context).use { r ->
+            val oldAccount=r.addAccount(Account(name="بانک سامان • بدون شناسه حساب",bankName="بانک سامان",smsIdentity="unidentified"))
+            val oldTx=r.addTransaction(FinanceTransaction(amount=640000,type=TransactionType.EXPENSE,occurredAt=200,reason="قدیمی",accountId=oldAccount,categoryId=null,personId=null,source=TransactionSource.SMS,externalKey=parsed.externalKey))
+            FinanceDb(context).use { helper -> helper.writableDatabase.execSQL("UPDATE accounts SET balance=7642736,balance_at=200 WHERE id=?",arrayOf<Any>(oldAccount)) }
+            r.acceptSms(parsed,true)
+            assertEquals(1,r.transactions().size);assertEquals(oldTx,r.transactions().single().transaction.id)
+            assertEquals(7642736L,r.dashboard().totalBalance);assertEquals(640000L,r.report(0,300).expense)
+            assertEquals(1,r.accounts().count{it.bankName.isNotBlank()});assertEquals("بلوبانک سامان",r.accounts().first{it.bankName.isNotBlank()}.bankName)
+        }
+    }
     private fun removeV3(db:SQLiteDatabase) {
         db.execSQL("DROP TABLE account_aliases")
         db.execSQL("ALTER TABLE transactions RENAME TO v3_transactions")

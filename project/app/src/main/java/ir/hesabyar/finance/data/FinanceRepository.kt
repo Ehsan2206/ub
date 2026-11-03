@@ -332,6 +332,11 @@ class FinanceRepository(context: Context) : java.io.Closeable {
         try {
             val deleted=db.rawQuery("SELECT 1 FROM deleted_sms WHERE external_key=?",arrayOf(p.externalKey)).use { it.moveToFirst() }
             if(deleted) return false
+            val prior=transactionByExternalKey(p.externalKey)?.let(::transaction)
+            // User edits and explicitly excluded accounts must survive every rescan, including reclassification.
+            if(prior!=null && prior.source!=TransactionSource.SMS) return false
+            val priorAccount=prior?.accountId?.let { id -> accounts().firstOrNull{it.id==id} }
+            if(priorAccount?.excluded==true) return false
             val bank=BankRegistry.canonicalName(p.bankName)
             val ids=(p.accountIdentities.ifEmpty{listOf(p.accountIdentity)}).map(AccountIdentity::normalize).filter{it!=AccountIdentity.UNIDENTIFIED}.distinct()
             val bankAccounts=accounts().filter{it.bankName==bank}
@@ -352,29 +357,29 @@ class FinanceRepository(context: Context) : java.io.Closeable {
                 db.execSQL("INSERT OR IGNORE INTO account_aliases(bank_name,identity,account_id) VALUES(?,?,?)",arrayOf<Any>(bank,alias,accountId))
             }
             var changed=existing==null
-            if(!snapshotOnly && p.amountRial!=null && p.type!=null) {
-                val id=addTransaction(FinanceTransaction(amount=p.amountRial,type=p.type,occurredAt=p.timestamp,reason=p.reason,accountId=accountId,categoryId=null,personId=null,source=TransactionSource.SMS,externalKey=p.externalKey,internalAmount=p.internalAmount,note=p.details))
-                changed=changed || id>0
-                if(id<=0 && p.internalAmount>0) {
-                    val original=transactionByExternalKey(p.externalKey)?.let(::transaction)
-                    if(original!=null && original.source==TransactionSource.SMS && original.accountId==accountId && original.internalAmount==0L) {
-                        val difference=p.amountRial-original.amount
-                        val delta=if(p.type==TransactionType.INCOME)difference else -difference
-                        db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?",arrayOf<Any>(delta,accountId,p.timestamp))
-                        db.execSQL("UPDATE transactions SET amount=?,internal_amount=?,note=?,reason=? WHERE id=?",arrayOf<Any>(p.amountRial,p.internalAmount,p.details,p.reason,original.id))
-                        db.execSQL("UPDATE bank_entries SET matched_transaction_id=NULL WHERE matched_transaction_id=?",arrayOf<Any>(original.id))
-                        changed=true
+            if(p.amountRial!=null && p.type!=null) {
+                if(prior==null && !snapshotOnly) {
+                    val id=addTransaction(FinanceTransaction(amount=p.amountRial,type=p.type,occurredAt=p.timestamp,reason=p.reason,accountId=accountId,categoryId=null,personId=null,source=TransactionSource.SMS,externalKey=p.externalKey,internalAmount=p.internalAmount,note=p.details))
+                    changed=changed || id>0
+                } else if(prior!=null && (prior.accountId!=accountId || prior.amount!=p.amountRial || prior.type!=p.type || prior.internalAmount!=p.internalAmount)) {
+                    prior.accountId?.let { id ->
+                        val reverse=if(prior.type==TransactionType.INCOME)-prior.amount else prior.amount
+                        db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?",arrayOf<Any>(reverse,id,prior.occurredAt))
                     }
-                }
-                if(id<=0) {
-                    // Earlier versions kept unmatched SMS without an account. Attach those on re-import.
-                    val values=ContentValues().apply { put("account_id",accountId);put("amount",p.amountRial);put("type",p.type.name);put("reason",p.reason);put("internal_amount",p.internalAmount);put("note",p.details) }
-                    val attached=db.update("transactions",values,"external_key=? AND account_id IS NULL AND source='SMS'",arrayOf(p.externalKey))
-                    if(attached>0) {
-                        val delta=if(p.type==TransactionType.INCOME) p.amountRial else -p.amountRial
-                        db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?",arrayOf<Any>(delta,accountId,p.timestamp))
-                        changed=true
+                    val values=ContentValues().apply {
+                        put("account_id",accountId);put("amount",p.amountRial);put("type",p.type.name);put("reason",p.reason)
+                        put("internal_amount",p.internalAmount);put("note",p.details.ifBlank{prior.note})
                     }
+                    db.update("transactions",values,"id=?",arrayOf(prior.id.toString()))
+                    val delta=if(p.type==TransactionType.INCOME)p.amountRial else -p.amountRial
+                    db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?",arrayOf<Any>(delta,accountId,p.timestamp))
+                    db.execSQL("UPDATE bank_entries SET matched_transaction_id=NULL WHERE matched_transaction_id=?",arrayOf<Any>(prior.id))
+                    // Remove only empty, automatically generated unidentified buckets after bank reclassification.
+                    if(priorAccount!=null && priorAccount.id!=accountId && priorAccount.smsIdentity==AccountIdentity.UNIDENTIFIED && priorAccount.name.endsWith("بدون شناسه حساب")) {
+                        val used=db.rawQuery("SELECT (SELECT COUNT(*) FROM transactions WHERE account_id=?)+(SELECT COUNT(*) FROM installments WHERE account_id=?)",arrayOf(priorAccount.id.toString(),priorAccount.id.toString())).use{it.moveToFirst();it.getLong(0)>0}
+                        if(!used) {db.delete("account_aliases","account_id=?",arrayOf(priorAccount.id.toString()));db.delete("accounts","id=?",arrayOf(priorAccount.id.toString()))}
+                    }
+                    changed=true
                 }
             }
             p.balanceRial?.let { balance ->
