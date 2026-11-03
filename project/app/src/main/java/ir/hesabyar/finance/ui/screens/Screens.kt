@@ -34,6 +34,8 @@ import androidx.compose.ui.semantics.contentDescription
 import ir.hesabyar.finance.data.*
 import ir.hesabyar.finance.util.DateUtil
 import ir.hesabyar.finance.util.Money
+import ir.hesabyar.finance.util.normalizeDigits
+import ir.hesabyar.finance.sms.AccountIdentity
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.absoluteValue
@@ -172,6 +174,7 @@ private fun TransactionTile(row: TransactionRow, onDelete: (() -> Unit)? = null,
             Column(horizontalAlignment = Alignment.End, modifier=Modifier.widthIn(max=170.dp)) {
                 Text((if(tx.type==TransactionType.INCOME) "+" else "−") + Money.format(tx.amount), fontWeight = FontWeight.Black, color = if(tx.type==TransactionType.INCOME) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error)
                 Text(DateUtil.formatDate(tx.occurredAt), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if(tx.internalAmount>0) Text("شامل ${Money.format(tx.internalAmount)} رند باکس",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 Row {
                     onEdit?.let { action -> TextButton(onClick=action,modifier=Modifier.semantics { contentDescription="ویرایش ${tx.reason}" },contentPadding=PaddingValues(horizontal=8.dp,vertical=0.dp)){Text("ویرایش",fontSize=11.sp)} }
                     onDelete?.let { TextButton(onClick=it,contentPadding=PaddingValues(horizontal=8.dp,vertical=0.dp)){Text("حذف",color=MaterialTheme.colorScheme.error,fontSize=11.sp)} }
@@ -363,11 +366,15 @@ fun MoreScreen(
         OutlinedButton(onClick=onSms,modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.Sms,null);Spacer(Modifier.width(8.dp));Text("ورود پیامک و مدیریت سرشماره‌ها")}
         FeatureSection("حساب‌ها",Icons.Rounded.AccountBalanceWallet,action="افزودن",onAction={addAccount=true}){
             Text("حساب مستثنا در موجودی کل، گزارش‌ها و ثبت خودکار پیامک محاسبه نمی‌شود.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            accounts.forEach { a ->
-                Column(Modifier.fillMaxWidth().padding(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(a.name,fontWeight=FontWeight.Bold);Text(a.bankName.ifBlank{a.type},fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)};Text(Money.format(a.balance),fontWeight=FontWeight.Bold)}
-                    Row(verticalAlignment=Alignment.CenterVertically){Text(if(a.excluded)"مستثنا از محاسبات" else "فعال در محاسبات",Modifier.weight(1f),fontSize=12.sp);Switch(checked=!a.excluded,onCheckedChange={onExclude(a.id,!it)})}
-                    HorizontalDivider()
+            accounts.groupBy{it.bankName.ifBlank{it.type}}.forEach { (bank,bankAccounts) ->
+                Text(bank,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
+                bankAccounts.forEach { a ->
+                    Column(Modifier.fillMaxWidth().padding(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(a.name,fontWeight=FontWeight.Bold);Text(a.cardLast4.takeIf{it.isNotBlank()}?.let{"شناسه حساب / کارت: $it"} ?: a.type,fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)};Text(Money.format(a.balance),fontWeight=FontWeight.Bold)}
+                        if(a.smsIdentity==AccountIdentity.UNIDENTIFIED) Text("پیامک شماره حساب ندارد؛ برای تفکیک چند حساب، حساب هر تراکنش را در ویرایش مشخص کنید.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(verticalAlignment=Alignment.CenterVertically){Text(if(a.excluded)"مستثنا از محاسبات" else "فعال در محاسبات",Modifier.weight(1f),fontSize=12.sp);Switch(checked=!a.excluded,onCheckedChange={onExclude(a.id,!it)})}
+                        HorizontalDivider()
+                    }
                 }
             }
         }
@@ -376,8 +383,7 @@ fun MoreScreen(
         }
         FeatureSection("اقساط و یادآوری",Icons.Rounded.EventRepeat,action="قسط جدید",onAction={addInstallment=true}){
             OutlinedButton(onClick=onRequestNotification,modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.NotificationsActive,null);Spacer(Modifier.width(8.dp));Text("بررسی مجوز اعلان")}
-            installments.filter{it.status==InstallmentStatus.OPEN}.take(5).forEach{i->Row(Modifier.fillMaxWidth().padding(vertical=7.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(i.title,fontWeight=FontWeight.Bold);Text("سررسید ${DateUtil.formatDate(i.dueAt)}",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)};Column(horizontalAlignment=Alignment.End){Text(Money.format(i.amount),fontWeight=FontWeight.Bold);TextButton(onClick={onPaid(i.id)}){Text("پرداخت شد")}}}}
-            if(installments.none{it.status==InstallmentStatus.OPEN}) Text("قسط پرداخت‌نشده‌ای ثبت نشده",color=MaterialTheme.colorScheme.onSurfaceVariant)
+            InstallmentsList(installments,onPaid)
         }
         FeatureSection("ورود فایل بانک و مغایرت‌گیری",Icons.Rounded.FactCheck){
             SimpleSelectorField("حساب مورد تطبیق",accounts.map{it.id to it.name},importAccountId){importAccountId=it}
@@ -394,6 +400,22 @@ fun MoreScreen(
     if(addAccount)AddAccountDialog({addAccount=false}){onAddAccount(it);addAccount=false}
     if(addCategory)AddCategoryDialog({addCategory=false}){onAddCategory(it);addCategory=false}
     if(addInstallment)AddInstallmentDialog(accounts,people,{addInstallment=false}){item,count->onAddInstallment(item,count);addInstallment=false}
+}
+
+@Composable
+internal fun InstallmentsList(installments:List<Installment>,onPaid:(Long)->Unit) {
+    val open=installments.filter{it.status==InstallmentStatus.OPEN}.sortedBy{it.dueAt}
+    Text("${open.size} قسط پرداخت‌نشده",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    if(open.isEmpty()) Text("قسط پرداخت‌نشده‌ای ثبت نشده",color=MaterialTheme.colorScheme.onSurfaceVariant)
+    open.groupBy{DateUtil.formatDate(it.dueAt).substringBefore('/')}.forEach { (year,items) ->
+        Text("سال $year • ${items.size} قسط",fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
+        items.forEach { i ->
+            Row(Modifier.fillMaxWidth().padding(vertical=7.dp),verticalAlignment=Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)){Text(i.title,fontWeight=FontWeight.Bold);Text("سررسید ${DateUtil.formatDate(i.dueAt)}",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+                Column(horizontalAlignment=Alignment.End){Text(Money.format(i.amount),fontWeight=FontWeight.Bold);TextButton(onClick={onPaid(i.id)}){Text("پرداخت شد")}}
+            }
+        }
+    }
 }
 
 @Composable
@@ -420,7 +442,7 @@ private fun AddInstallmentDialog(accounts:List<Account>,people:List<Person>,onDi
         OutlinedTextField(title,{title=it},label={Text("عنوان قسط / قرارداد")});OutlinedTextField(amount,{amount=it},label={Text("مبلغ هر قسط (ریال)")});DateButton("اولین سررسید",date,Modifier.fillMaxWidth()){date=it}
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedTextField(count,{count=it},label={Text("تعداد اقساط")},modifier=Modifier.weight(1f));OutlinedTextField(everyMonths,{everyMonths=it},label={Text("فاصله (ماه)")},modifier=Modifier.weight(1f))}
         SimpleSelectorField("حساب پرداخت",accounts.map{it.id to it.name},accountId){accountId=it};SimpleSelectorField("طرف حساب (اختیاری)",people.map{it.id to it.name},personId){personId=it};OutlinedTextField(reminder,{reminder=it},label={Text("چند روز قبل یادآوری شود؟")})
-    }},confirmButton={Button(onClick={onSave(Installment(title=title.trim(),amount=Money.parse(amount),dueAt=date.atStartOfDay(zone).toInstant().toEpochMilli(),accountId=accountId,personId=personId,repeatUnit="ماه",repeatEvery=everyMonths.toIntOrNull()?.coerceIn(1,24)?:1,reminderDaysBefore=reminder.toIntOrNull()?.coerceIn(0,30)?:1),count.toIntOrNull()?.coerceIn(1,120)?:1)},enabled=title.isNotBlank()&&Money.parse(amount)>0){Text("ساخت برنامه")}},dismissButton={TextButton(onClick=onDismiss){Text("لغو")}})
+    }},confirmButton={Button(onClick={onSave(Installment(title=title.trim(),amount=Money.parse(amount),dueAt=date.atStartOfDay(zone).toInstant().toEpochMilli(),accountId=accountId,personId=personId,repeatUnit="ماه",repeatEvery=everyMonths.normalizeDigits().toIntOrNull()?.coerceIn(1,24)?:1,reminderDaysBefore=reminder.normalizeDigits().toIntOrNull()?.coerceIn(0,30)?:1),count.normalizeDigits().toIntOrNull()?.coerceIn(1,120)?:1)},enabled=title.isNotBlank()&&Money.parse(amount)>0){Text("ساخت برنامه")}},dismissButton={TextButton(onClick=onDismiss){Text("لغو")}})
 }
 
 @Composable
@@ -443,6 +465,7 @@ fun AddTransactionDialog(
     var personId by remember(initial?.id){mutableStateOf(initial?.personId)}
     var split by remember(initial?.id){mutableStateOf(initialSplits.isNotEmpty())}
     var note by remember(initial?.id){mutableStateOf(initial?.note.orEmpty())}
+    var roundAmount by remember(initial?.id){mutableStateOf((initial?.internalAmount ?: 0L).toString())}
     val splitAmounts=remember(initial?.id){mutableStateMapOf<Long,String>().apply { initialSplits.forEach { put(it.personId,it.amount.toString()) } }}
     val splitRelations=remember(initial?.id){mutableStateMapOf<Long,SplitRelation>().apply { initialSplits.forEach { put(it.personId,it.relation) } }}
     val allowedCats=categories.filter{it.type==type}
@@ -451,7 +474,7 @@ fun AddTransactionDialog(
         if(categoryId!=null && allowedCats.none{it.id==categoryId}) categoryId=null
         if(initial==null && categoryId==null) categoryId=allowedCats.firstOrNull()?.id
     }
-    val valid=Money.parse(amount)>0 && (!split || (splitAmounts.isNotEmpty() && splitAmounts.values.all{Money.parse(it)>0}))
+    val valid=Money.parse(amount)>0 && Money.parse(roundAmount) in 0..Money.parse(amount) && (!split || (splitAmounts.isNotEmpty() && splitAmounts.values.all{Money.parse(it)>0}))
     Dialog(onDismissRequest={if(!busy)onDismiss()}) {
         Surface(shape=RoundedCornerShape(28.dp),modifier=Modifier.fillMaxWidth().heightIn(max=760.dp)) {
             Column(Modifier.padding(18.dp)) {
@@ -465,6 +488,7 @@ fun AddTransactionDialog(
                         FilterChip(type==TransactionType.INCOME,{type=TransactionType.INCOME},{Text("درآمد")})
                     }
                     OutlinedTextField(amount,{amount=it},label={Text("مبلغ (ریال)")},modifier=Modifier.fillMaxWidth(),singleLine=true,textStyle=LocalTextStyle.current.copy(fontSize=22.sp,fontWeight=FontWeight.Bold))
+                    if((initial?.internalAmount ?: 0)>0 && type==TransactionType.EXPENSE) OutlinedTextField(roundAmount,{roundAmount=it},label={Text("انتقال رند به باکس (ریال)")},modifier=Modifier.fillMaxWidth(),supportingText={Text("این بخش در هزینه‌ها محاسبه نمی‌شود")})
                     OutlinedTextField(reason,{reason=it},label={Text("علت / شرح")},modifier=Modifier.fillMaxWidth())
                     DateButton("تاریخ",txDate,Modifier.fillMaxWidth()){txDate=it}
                     SimpleSelectorField("حساب (اختیاری)",accounts.map{it.id to it.name},accountId){accountId=it}
@@ -504,7 +528,7 @@ fun AddTransactionDialog(
                 Button(onClick={
                     // Keep the exact original instant when the date is unchanged, especially for SMS snapshots.
                     val occurredAt=if(originalTime?.toLocalDate()==txDate) initial!!.occurredAt else txDate.atTime(originalTime?.toLocalTime() ?: java.time.LocalTime.NOON).atZone(zone).toInstant().toEpochMilli()
-                    val tx=FinanceTransaction(id=initial?.id ?: 0,amount=Money.parse(amount),type=type,occurredAt=occurredAt,reason=reason.trim().ifBlank{if(type==TransactionType.EXPENSE)"هزینه" else "درآمد"},accountId=accountId,categoryId=categoryId,personId=if(split)null else personId,source=initial?.source ?: TransactionSource.MANUAL,note=note.trim(),externalKey=initial?.externalKey.orEmpty())
+                    val tx=FinanceTransaction(id=initial?.id ?: 0,amount=Money.parse(amount),type=type,occurredAt=occurredAt,reason=reason.trim().ifBlank{if(type==TransactionType.EXPENSE)"هزینه" else "درآمد"},accountId=accountId,categoryId=categoryId,personId=if(split)null else personId,source=initial?.source ?: TransactionSource.MANUAL,note=note.trim(),externalKey=initial?.externalKey.orEmpty(),internalAmount=if(type==TransactionType.EXPENSE)Money.parse(roundAmount) else 0L)
                     val drafts=if(!split)emptyList() else splitAmounts.map{(pid,a)->SplitDraft(pid,Money.parse(a),splitRelations[pid] ?: SplitRelation.OWES_ME)}
                     onSave(tx,drafts)
                 },enabled=valid&&!busy,modifier=Modifier.fillMaxWidth().height(52.dp),shape=RoundedCornerShape(18.dp)) {

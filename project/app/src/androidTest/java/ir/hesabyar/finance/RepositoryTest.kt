@@ -115,9 +115,79 @@ class RepositoryTest {
             assertEquals(2,r.transactions().size)
         }
     }
+    @Test fun sendersAreNotAccountsAndTwoBankAccountsRemainDistinct() {
+        FinanceRepository(context).use { r ->
+            fun sms(sender:String,id:String,time:Long,balance:Long)=SmsParser.parse(sender,"برداشت:100 ریال\nحساب:$id\nمانده:$balance ریال",time)!!
+            r.acceptSms(sms("B.Pasargad","123.456.789",100,900))
+            r.acceptSms(sms("BankPasargad","123456789",200,800))
+            assertEquals(1,r.accounts().count{it.bankName=="بانک پاسارگاد"})
+            r.acceptSms(sms("B.Pasargad","987654321",300,1200))
+            assertEquals(2,r.accounts().count{it.bankName=="بانک پاسارگاد"})
+            assertEquals(2000L,r.dashboard().totalBalance)
+            r.acceptSms(SmsParser.parse("B.Pasargad","برداشت:100 ریال\nمانده:700 ریال",400)!!)
+            r.acceptSms(SmsParser.parse("BankPasargad","برداشت:100 ریال\nمانده:600 ریال",500)!!)
+            val unknown=r.accounts().filter{it.smsIdentity=="unidentified"}
+            assertEquals(1,unknown.size);assertEquals(600L,unknown.single().balance)
+            assertEquals(2000L,r.dashboard().totalBalance)
+            val unknownTx=r.transactions().filter{it.transaction.occurredAt>=400}
+            assertTrue(unknownTx.all{it.transaction.accountId==unknown.single().id})
+        }
+    }
+    @Test fun accountCardAliasesAndSameSuffixDoNotMergeUnrelatedAccounts() {
+        FinanceRepository(context).use { r ->
+            r.acceptSms(SmsParser.parse("TejaratBank","برداشت:100 ریال\nحساب:11111234\nکارت:6037990012341234\nمانده:900 ریال",100)!!)
+            r.acceptSms(SmsParser.parse("BankTejarat","برداشت:100 ریال\nکارت:6037990012341234\nمانده:800 ریال",200)!!)
+            assertEquals(1,r.accounts().count{it.bankName=="بانک تجارت"})
+            r.acceptSms(SmsParser.parse("TejaratBank","برداشت:100 ریال\nحساب:22221234\nمانده:2000 ریال",300)!!)
+            assertEquals(2,r.accounts().count{it.bankName=="بانک تجارت"})
+            r.acceptSms(SmsParser.parse("TejaratBank","برداشت:100 ریال\nکارت:603799**1234\nمانده:700 ریال",400)!!)
+            assertEquals(2,r.accounts().count{it.bankName=="بانک تجارت"})
+            assertEquals(2700L,r.dashboard().totalBalance)
+        }
+    }
+    @Test fun bluRoundUpdatesAvailableBalanceButNotExpenseBySavingsPortion() {
+        FinanceRepository(context).use { r ->
+            val a=SmsParser.parse("BluBank","بلو\nواریز پول\nمشتری عزیز، 3,130,000ریال به حساب شما نشست.\nموجودی:10,720,458 ریال",100)!!
+            val b=SmsParser.parse("987654321","بلو\nبرداشت رُند\nمشتری عزیز، 640,000 ریال از حساب شما پرید.\nو 10,000 ریال هم رند شد.\nموجودی:7,642,736 ریال",200)!!
+            r.acceptSms(a);r.acceptSms(b);r.acceptSms(b)
+            assertEquals(1,r.accounts().count{it.bankName=="بلوبانک سامان"})
+            assertEquals(7642736L,r.dashboard().totalBalance)
+            assertEquals(640000L,r.report(0,300).expense)
+            assertEquals(3130000L,r.report(0,300).income)
+            val tx=r.transactions().first{it.transaction.occurredAt==200L}.transaction
+            assertEquals(650000L,tx.amount);assertEquals(10000L,tx.internalAmount)
+            r.updateTransaction(tx.copy(note="ویرایش شرح"),emptyList())
+            assertEquals(640000L,r.report(0,300).expense);assertEquals(10000L,r.transaction(tx.id)!!.internalAmount)
+        }
+    }
+    private fun removeV3(db:SQLiteDatabase) {
+        db.execSQL("DROP TABLE account_aliases")
+        db.execSQL("ALTER TABLE transactions RENAME TO v3_transactions")
+        db.execSQL("CREATE TABLE transactions(id INTEGER PRIMARY KEY AUTOINCREMENT,amount INTEGER NOT NULL,type TEXT NOT NULL,occurred_at INTEGER NOT NULL,reason TEXT NOT NULL,account_id INTEGER,category_id INTEGER,person_id INTEGER,source TEXT NOT NULL,note TEXT NOT NULL DEFAULT '',external_key TEXT)")
+        db.execSQL("INSERT INTO transactions(id,amount,type,occurred_at,reason,account_id,category_id,person_id,source,note,external_key) SELECT id,amount,type,occurred_at,reason,account_id,category_id,person_id,source,note,external_key FROM v3_transactions")
+        db.execSQL("DROP TABLE v3_transactions")
+        db.execSQL("CREATE UNIQUE INDEX tx_external_key_idx ON transactions(external_key) WHERE external_key IS NOT NULL AND external_key<>''")
+    }
+    @Test fun migrationConsolidatesSenderBucketsUsingLatestSnapshotNotSum() {
+        val helper=FinanceDb(context);val db=helper.writableDatabase
+        db.execSQL("INSERT INTO accounts(name,type,bank_name,sms_identity,balance,balance_at) VALUES('شماره قدیم','بانک','پاسارگاد','sender:1000900',850,100)")
+        val a=db.rawQuery("SELECT MAX(id) FROM accounts",null).use{it.moveToFirst();it.getLong(0)}
+        db.execSQL("INSERT INTO accounts(name,type,bank_name,sms_identity,balance,balance_at) VALUES('شماره جدید','بانک','ویپاد','sender:b.pasargad',800,200)")
+        val b=db.rawQuery("SELECT MAX(id) FROM accounts",null).use{it.moveToFirst();it.getLong(0)}
+        db.execSQL("INSERT INTO transactions(amount,type,occurred_at,reason,account_id,source) VALUES(50,'EXPENSE',300,'بعد از مانده',?,'MANUAL')",arrayOf<Any>(a))
+        db.execSQL("INSERT INTO installments(title,amount,due_at,account_id) VALUES('قسط مرتبط',20,1000,?)",arrayOf<Any>(b))
+        removeV3(db);db.version=2;helper.close()
+        FinanceRepository(context).use { r ->
+            val bank=r.accounts().filter{it.bankName=="بانک پاسارگاد"};assertEquals(1,bank.size)
+            assertEquals(750L,bank.single().balance);assertEquals("unidentified",bank.single().smsIdentity)
+            assertEquals(bank.single().id,r.transactions().single().transaction.accountId)
+            assertEquals(bank.single().id,r.installments().single().accountId)
+        }
+    }
     @Test fun migrationConvertsTomanExactlyOnce() {
         // Construct the actual v1 schema by creating current tables and rebuilding only accounts.
         val helper=FinanceDb(context);val db=helper.writableDatabase
+        removeV3(db)
         db.execSQL("DROP TABLE deleted_sms")
         db.execSQL("ALTER TABLE accounts RENAME TO old_accounts")
         db.execSQL("CREATE TABLE accounts(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,type TEXT NOT NULL,bank_name TEXT NOT NULL DEFAULT '',card_last4 TEXT NOT NULL DEFAULT '',balance INTEGER NOT NULL DEFAULT 0,group_name TEXT NOT NULL DEFAULT 'شخصی')")
@@ -126,7 +196,7 @@ class RepositoryTest {
         db.execSQL("INSERT INTO person_ledger(person_id,amount_signed,occurred_at,note) VALUES(1,42,1,'test')")
         db.version=1;helper.close()
         val r=FinanceRepository(context);assertEquals(1230L,r.accounts().single().balance)
-        FinanceDb(context).readableDatabase.use { migrated -> assertEquals(2,migrated.version);migrated.rawQuery("SELECT amount_signed FROM person_ledger",null).use{it.moveToFirst();assertEquals(420L,it.getLong(0))} }
+        FinanceDb(context).readableDatabase.use { migrated -> assertEquals(3,migrated.version);migrated.rawQuery("SELECT amount_signed FROM person_ledger",null).use{it.moveToFirst();assertEquals(420L,it.getLong(0))} }
         assertEquals(1230L,r.accounts().single().balance)
     }
 }

@@ -43,7 +43,8 @@ data class FinanceTransaction(
     val personId: Long?,
     val source: TransactionSource,
     val note: String = "",
-    val externalKey: String = ""
+    val externalKey: String = "",
+    val internalAmount: Long = 0
 )
 
 data class TransactionRow(

@@ -9,7 +9,7 @@ object SmsImporter {
     fun custom(context:Context):Map<String,String> = context.getSharedPreferences("sms_banks",Context.MODE_PRIVATE).all.mapValues{it.value.toString()}
     fun saveSender(context:Context,sender:String,bank:String) {
         require(sender.isNotBlank() && bank.isNotBlank())
-        context.getSharedPreferences("sms_banks",Context.MODE_PRIVATE).edit().putString(BankRegistry.senderKey(sender),bank.trim()).apply()
+        context.getSharedPreferences("sms_banks",Context.MODE_PRIVATE).edit().putString(BankRegistry.senderKey(sender),BankRegistry.canonicalName(bank)).apply()
     }
     fun removeSender(context:Context,sender:String) { context.getSharedPreferences("sms_banks",Context.MODE_PRIVATE).edit().remove(sender).apply() }
     fun import(context:Context,repo:FinanceRepository,from:Long,to:Long,latestOnly:Boolean):Result {

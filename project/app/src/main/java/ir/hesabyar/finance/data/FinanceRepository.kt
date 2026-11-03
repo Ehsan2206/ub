@@ -1,6 +1,8 @@
 package ir.hesabyar.finance.data
 
 import ir.hesabyar.finance.util.DateUtil
+import ir.hesabyar.finance.sms.AccountIdentity
+import ir.hesabyar.finance.sms.BankRegistry
 
 import android.content.ContentValues
 import android.content.Context
@@ -38,7 +40,7 @@ class FinanceRepository(context: Context) : java.io.Closeable {
 
     fun addAccount(account: Account): Long {
         val cv = ContentValues().apply {
-            put("name", account.name); put("type", account.type); put("bank_name", account.bankName)
+            put("name", account.name); put("type", account.type); put("bank_name", if(account.bankName.isBlank()) "" else BankRegistry.canonicalName(account.bankName))
             put("card_last4", account.cardLast4); put("balance", account.balance); put("group_name", account.groupName); put("excluded", if(account.excluded) 1 else 0); put("sms_identity", account.smsIdentity)
         }
         return dbHelper.writableDatabase.insert("accounts", null, cv)
@@ -52,11 +54,12 @@ class FinanceRepository(context: Context) : java.io.Closeable {
     }
 
     fun addTransaction(tx: FinanceTransaction, splits: List<SplitDraft> = emptyList()): Long {
+        require(tx.internalAmount in 0..tx.amount && (tx.internalAmount==0L || tx.type==TransactionType.EXPENSE))
         val db = dbHelper.writableDatabase
         db.beginTransaction()
         return try {
             val cv = ContentValues().apply {
-                put("amount", tx.amount); put("type", tx.type.name); put("occurred_at", tx.occurredAt)
+                put("amount", tx.amount); put("internal_amount",tx.internalAmount); put("type", tx.type.name); put("occurred_at", tx.occurredAt)
                 put("reason", tx.reason); tx.accountId?.let { put("account_id", it) }; tx.categoryId?.let { put("category_id", it) }
                 tx.personId?.let { put("person_id", it) }; put("source", tx.source.name); put("note", tx.note); if (tx.externalKey.isNotBlank()) put("external_key", tx.externalKey) else putNull("external_key")
             }
@@ -84,8 +87,8 @@ class FinanceRepository(context: Context) : java.io.Closeable {
     }
 
     fun transaction(id: Long): FinanceTransaction? = dbHelper.readableDatabase.rawQuery(
-        "SELECT id,amount,type,occurred_at,reason,account_id,category_id,person_id,source,note,external_key FROM transactions WHERE id=?", arrayOf(id.toString())
-    ).use { c -> if(c.moveToFirst()) FinanceTransaction(c.getLong(0),c.getLong(1),TransactionType.valueOf(c.getString(2)),c.getLong(3),c.getString(4),c.longOrNull(5),c.longOrNull(6),c.longOrNull(7),TransactionSource.valueOf(c.getString(8)),c.getString(9),c.getString(10).orEmpty()) else null }
+        "SELECT id,amount,type,occurred_at,reason,account_id,category_id,person_id,source,note,external_key,internal_amount FROM transactions WHERE id=?", arrayOf(id.toString())
+    ).use { c -> if(c.moveToFirst()) FinanceTransaction(c.getLong(0),c.getLong(1),TransactionType.valueOf(c.getString(2)),c.getLong(3),c.getString(4),c.longOrNull(5),c.longOrNull(6),c.longOrNull(7),TransactionSource.valueOf(c.getString(8)),c.getString(9),c.getString(10).orEmpty(),c.getLong(11)) else null }
 
     fun transactionSplits(id: Long): List<SplitDraft> = dbHelper.readableDatabase.rawQuery(
         "SELECT person_id,amount_signed FROM person_ledger WHERE transaction_id=? ORDER BY id", arrayOf(id.toString())
@@ -93,6 +96,7 @@ class FinanceRepository(context: Context) : java.io.Closeable {
 
     fun updateTransaction(tx: FinanceTransaction, splits: List<SplitDraft>) {
         require(tx.amount>0) { "مبلغ باید بیشتر از صفر باشد" }
+        require(tx.internalAmount in 0..tx.amount && (tx.internalAmount==0L || tx.type==TransactionType.EXPENSE)) { "مبلغ انتقال داخلی معتبر نیست" }
         require(splits.all { it.amount>0 } && splits.map { it.personId }.distinct().size==splits.size) { "سهم اشخاص معتبر نیست" }
         val db=dbHelper.writableDatabase
         db.beginTransaction()
@@ -109,7 +113,7 @@ class FinanceRepository(context: Context) : java.io.Closeable {
                 db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?",arrayOf<Any>(reverse,id,old.occurredAt))
             }
             val cv=ContentValues().apply {
-                put("amount",tx.amount);put("type",tx.type.name);put("occurred_at",tx.occurredAt);put("reason",tx.reason);put("note",tx.note)
+                put("amount",tx.amount);put("internal_amount",tx.internalAmount);put("type",tx.type.name);put("occurred_at",tx.occurredAt);put("reason",tx.reason);put("note",tx.note)
                 if(tx.accountId==null) putNull("account_id") else put("account_id",tx.accountId)
                 if(tx.categoryId==null) putNull("category_id") else put("category_id",tx.categoryId)
                 if(tx.personId==null || splits.isNotEmpty()) putNull("person_id") else put("person_id",tx.personId)
@@ -151,7 +155,7 @@ class FinanceRepository(context: Context) : java.io.Closeable {
         val clause = if (where.isEmpty()) "" else "WHERE ${where.joinToString(" AND ")}"
         val sql = """
             SELECT t.id,t.amount,t.type,t.occurred_at,t.reason,t.account_id,t.category_id,t.person_id,t.source,t.note,t.external_key,
-                   COALESCE(a.name,''),COALESCE(p.name,(SELECT GROUP_CONCAT(pp.name,'، ') FROM person_ledger pl JOIN people pp ON pp.id=pl.person_id WHERE pl.transaction_id=t.id),''),COALESCE(c.name,'')
+                   COALESCE(a.name,''),COALESCE(p.name,(SELECT GROUP_CONCAT(pp.name,'، ') FROM person_ledger pl JOIN people pp ON pp.id=pl.person_id WHERE pl.transaction_id=t.id),''),COALESCE(c.name,''),t.internal_amount
             FROM transactions t
             LEFT JOIN accounts a ON a.id=t.account_id
             LEFT JOIN people p ON p.id=t.person_id
@@ -165,7 +169,7 @@ class FinanceRepository(context: Context) : java.io.Closeable {
                     val tx = FinanceTransaction(
                         id = c.getLong(0), amount = c.getLong(1), type = TransactionType.valueOf(c.getString(2)), occurredAt = c.getLong(3),
                         reason = c.getString(4), accountId = c.longOrNull(5), categoryId = c.longOrNull(6), personId = c.longOrNull(7),
-                        source = TransactionSource.valueOf(c.getString(8)), note = c.getString(9), externalKey = c.getString(10).orEmpty()
+                        source = TransactionSource.valueOf(c.getString(8)), note = c.getString(9), externalKey = c.getString(10).orEmpty(), internalAmount = c.getLong(14)
                     )
                     add(TransactionRow(tx, c.getString(11), c.getString(12), c.getString(13)))
                 }
@@ -180,10 +184,10 @@ class FinanceRepository(context: Context) : java.io.Closeable {
         val dayEnd = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
         val (monthStart, monthEnd) = DateUtil.jalaliMonthRange(today)
         fun sum(type: TransactionType, from: Long, to: Long): Long = dbHelper.readableDatabase.rawQuery(
-            "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE (account_id IS NULL OR account_id IN (SELECT id FROM accounts WHERE excluded=0)) AND type=? AND occurred_at BETWEEN ? AND ?",
+            "SELECT COALESCE(SUM(amount-internal_amount),0) FROM transactions WHERE (account_id IS NULL OR account_id IN (SELECT id FROM accounts WHERE excluded=0)) AND type=? AND occurred_at BETWEEN ? AND ?",
             arrayOf(type.name, from.toString(), to.toString())
         ).use { c -> c.moveToFirst(); c.getLong(0) }
-        val totalBalance = dbHelper.readableDatabase.rawQuery("SELECT COALESCE(SUM(balance),0) FROM accounts WHERE excluded=0", null).use { c -> c.moveToFirst(); c.getLong(0) }
+        val totalBalance = dbHelper.readableDatabase.rawQuery("SELECT COALESCE(SUM(balance),0) FROM accounts a WHERE excluded=0 AND NOT(a.sms_identity='unidentified' AND EXISTS(SELECT 1 FROM accounts b WHERE b.bank_name=a.bank_name AND b.sms_identity<>'unidentified' AND b.sms_identity<>''))", null).use { c -> c.moveToFirst(); c.getLong(0) }
         val balances = personBalances()
         return DashboardSummary(
             totalBalance = totalBalance,
@@ -239,11 +243,11 @@ class FinanceRepository(context: Context) : java.io.Closeable {
         personId?.let { baseWhere += "(t.person_id=? OR EXISTS (SELECT 1 FROM person_ledger pl WHERE pl.transaction_id=t.id AND pl.person_id=?))"; args += it.toString(); args += it.toString() }
         val where = baseWhere.joinToString(" AND ")
         var income = 0L; var expense = 0L
-        dbHelper.readableDatabase.rawQuery("SELECT type,COALESCE(SUM(amount),0) FROM transactions t WHERE $where GROUP BY type", args.toTypedArray()).use { c ->
+        dbHelper.readableDatabase.rawQuery("SELECT type,COALESCE(SUM(amount-internal_amount),0) FROM transactions t WHERE $where GROUP BY type", args.toTypedArray()).use { c ->
             while (c.moveToNext()) if (c.getString(0)=="INCOME") income=c.getLong(1) else expense=c.getLong(1)
         }
         val cats = dbHelper.readableDatabase.rawQuery(
-            "SELECT COALESCE(c.name,'بدون دسته'),SUM(t.amount) FROM transactions t LEFT JOIN categories c ON c.id=t.category_id WHERE $where AND t.type='EXPENSE' GROUP BY c.name ORDER BY SUM(t.amount) DESC LIMIT 8",
+            "SELECT COALESCE(c.name,'بدون دسته'),SUM(t.amount-t.internal_amount) FROM transactions t LEFT JOIN categories c ON c.id=t.category_id WHERE $where AND t.type='EXPENSE' GROUP BY c.name ORDER BY SUM(t.amount-t.internal_amount) DESC LIMIT 8",
             args.toTypedArray()
         ).use { c -> buildList { while (c.moveToNext()) add(c.getString(0) to c.getLong(1)) } }
         return ReportSummary(income, expense, income-expense, cats)
@@ -328,18 +332,43 @@ class FinanceRepository(context: Context) : java.io.Closeable {
         try {
             val deleted=db.rawQuery("SELECT 1 FROM deleted_sms WHERE external_key=?",arrayOf(p.externalKey)).use { it.moveToFirst() }
             if(deleted) return false
-            val existing=accounts().firstOrNull { it.bankName==p.bankName && it.smsIdentity==p.accountIdentity && it.smsIdentity.isNotBlank() }
-                ?: accounts().filter { it.bankName==p.bankName && it.cardLast4==p.accountLast4 && p.accountLast4.isNotBlank() && it.smsIdentity.isBlank() }.singleOrNull()
+            val bank=BankRegistry.canonicalName(p.bankName)
+            val ids=(p.accountIdentities.ifEmpty{listOf(p.accountIdentity)}).map(AccountIdentity::normalize).filter{it!=AccountIdentity.UNIDENTIFIED}.distinct()
+            val bankAccounts=accounts().filter{it.bankName==bank}
+            val mapped=ids.flatMap { identity -> db.rawQuery("SELECT account_id FROM account_aliases WHERE bank_name=? AND identity=?",arrayOf(bank,identity)).use { c ->buildList{while(c.moveToNext())add(c.getLong(0))} } }.distinct()
+            val aliasMatches=db.rawQuery("SELECT identity,account_id FROM account_aliases WHERE bank_name=?",arrayOf(bank)).use { c -> buildSet { while(c.moveToNext()) if(ids.any{AccountIdentity.matches(it,c.getString(0))})add(c.getLong(1)) } }
+            val candidates=bankAccounts.filter { a -> a.id in aliasMatches || ids.any { AccountIdentity.matches(it,AccountIdentity.normalize(a.smsIdentity)) } }
+            val suffix=if(ids.isNotEmpty() && mapped.isEmpty() && candidates.isEmpty()) bankAccounts.filter { it.smsIdentity.isBlank() && it.cardLast4==p.accountLast4 && p.accountLast4.isNotBlank() }.singleOrNull() else null
+            val matched=when {mapped.size==1 -> bankAccounts.firstOrNull{it.id==mapped.single()}; mapped.size>1 -> null; candidates.size==1 -> candidates.single();else -> suffix}
+            val ambiguous=mapped.size>1 || (mapped.isEmpty() && candidates.size>1)
+            val identity=if(ids.isEmpty() || ambiguous) AccountIdentity.UNIDENTIFIED else ids.first()
+            val existing=matched ?: bankAccounts.firstOrNull{AccountIdentity.normalize(it.smsIdentity)==identity && it.smsIdentity.isNotBlank()}
             if(existing?.excluded==true) return false
-            val accountId=existing?.id ?: addAccount(Account(name=p.bankName + if(p.accountLast4.isBlank()) " • بدون شناسه" else " • " + p.accountLast4,bankName=p.bankName,cardLast4=p.accountLast4,smsIdentity=p.accountIdentity))
-            if(existing!=null && existing.smsIdentity.isBlank()) db.execSQL("UPDATE accounts SET sms_identity=? WHERE id=?",arrayOf<Any>(p.accountIdentity,accountId))
+            val accountId=existing?.id ?: addAccount(Account(name=bank+if(identity==AccountIdentity.UNIDENTIFIED)" • بدون شناسه حساب" else " • "+p.accountLast4,bankName=bank,cardLast4=if(identity==AccountIdentity.UNIDENTIFIED)"" else p.accountLast4,smsIdentity=identity))
+            if(existing!=null && (existing.smsIdentity.isBlank() || (AccountIdentity.isFull(identity) && !AccountIdentity.isFull(existing.smsIdentity)))) {
+                db.execSQL("UPDATE accounts SET sms_identity=?,card_last4=? WHERE id=?",arrayOf<Any>(identity,p.accountLast4,accountId))
+            }
+            if(!ambiguous && identity!=AccountIdentity.UNIDENTIFIED) ids.forEach { alias ->
+                db.execSQL("INSERT OR IGNORE INTO account_aliases(bank_name,identity,account_id) VALUES(?,?,?)",arrayOf<Any>(bank,alias,accountId))
+            }
             var changed=existing==null
             if(!snapshotOnly && p.amountRial!=null && p.type!=null) {
-                val id=addTransaction(FinanceTransaction(amount=p.amountRial,type=p.type,occurredAt=p.timestamp,reason=p.reason,accountId=accountId,categoryId=null,personId=null,source=TransactionSource.SMS,externalKey=p.externalKey))
+                val id=addTransaction(FinanceTransaction(amount=p.amountRial,type=p.type,occurredAt=p.timestamp,reason=p.reason,accountId=accountId,categoryId=null,personId=null,source=TransactionSource.SMS,externalKey=p.externalKey,internalAmount=p.internalAmount,note=p.details))
                 changed=changed || id>0
+                if(id<=0 && p.internalAmount>0) {
+                    val original=transactionByExternalKey(p.externalKey)?.let(::transaction)
+                    if(original!=null && original.source==TransactionSource.SMS && original.accountId==accountId && original.internalAmount==0L) {
+                        val difference=p.amountRial-original.amount
+                        val delta=if(p.type==TransactionType.INCOME)difference else -difference
+                        db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?",arrayOf<Any>(delta,accountId,p.timestamp))
+                        db.execSQL("UPDATE transactions SET amount=?,internal_amount=?,note=?,reason=? WHERE id=?",arrayOf<Any>(p.amountRial,p.internalAmount,p.details,p.reason,original.id))
+                        db.execSQL("UPDATE bank_entries SET matched_transaction_id=NULL WHERE matched_transaction_id=?",arrayOf<Any>(original.id))
+                        changed=true
+                    }
+                }
                 if(id<=0) {
                     // Earlier versions kept unmatched SMS without an account. Attach those on re-import.
-                    val values=ContentValues().apply { put("account_id",accountId);put("amount",p.amountRial);put("type",p.type.name);put("reason",p.reason) }
+                    val values=ContentValues().apply { put("account_id",accountId);put("amount",p.amountRial);put("type",p.type.name);put("reason",p.reason);put("internal_amount",p.internalAmount);put("note",p.details) }
                     val attached=db.update("transactions",values,"external_key=? AND account_id IS NULL AND source='SMS'",arrayOf(p.externalKey))
                     if(attached>0) {
                         val delta=if(p.type==TransactionType.INCOME) p.amountRial else -p.amountRial

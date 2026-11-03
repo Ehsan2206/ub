@@ -10,12 +10,13 @@ object BankRegistry {
         BankDefinition("بانک سپه", listOf("200020","200021","200022","BankSepah","Sepah"), listOf("بانک سپه")),
         BankDefinition("بانک ملت", listOf("200033","200030","BankMellat"), listOf("بانک ملت")),
         BankDefinition("بانک صادرات ایران", listOf("200060","BankSaderat","BSI"), listOf("بانک صادرات ایران","بانک صادرات")),
-        BankDefinition("بانک تجارت", listOf("200070","20007010","BankTejarat"), listOf("بانک تجارت")),
+        BankDefinition("بانک تجارت", listOf("200070","20007010","BankTejarat","TejaratBank"), listOf("بانک تجارت")),
         BankDefinition("بانک کشاورزی", listOf("2000911","BankKeshavarzi"), listOf("بانک کشاورزی")),
         BankDefinition("بانک مسکن", listOf("300014","BankMaskan"), listOf("بانک مسکن")),
         BankDefinition("بانک رفاه کارگران", listOf("300066","300044","BankRefah"), listOf("بانک رفاه کارگران","بانک رفاه")),
+        BankDefinition("بلوبانک سامان", listOf("BluBank","blu","blubank.com","B.BluBank"), listOf("بلوبانک سامان","بلوبانک","بلو بانک","بلو")),
         BankDefinition("بانک سامان", listOf("20000","BankSaman","SamanBank"), listOf("بانک سامان")),
-        BankDefinition("بانک پاسارگاد", listOf("1000900","50009000","BankPasargad"), listOf("بانک پاسارگاد")),
+        BankDefinition("بانک پاسارگاد", listOf("1000900","50009000","BankPasargad","B.Pasargad"), listOf("بانک پاسارگاد","پاسارگاد","ویپاد","بانک پاسارگاد (ویپاد)","پاسارگاد (ویپاد)")),
         BankDefinition("بانک پارسیان", listOf("300054","50001099","300055","30007","BankParsian"), listOf("بانک پارسیان")),
         BankDefinition("بانک اقتصاد نوین", listOf("200050","ENBank"), listOf("بانک اقتصاد نوین","بانک اقتصادنوین")),
         BankDefinition("بانک سینا", listOf("200038","SinaBank"), listOf("بانک سینا")),
@@ -51,13 +52,19 @@ object BankRegistry {
         s=when { s.startsWith("+98") -> s.drop(3); s.startsWith("0098") -> s.drop(4); s.startsWith("098") -> s.drop(3); else -> s }
         return s
     }
+    fun canonicalName(value:String):String {
+        val key=normalize(value).replace(Regex("[ \u200c]"),"")
+        return banks.firstOrNull { b -> (listOf(b.name)+b.aliases+b.senders).any { normalize(it).replace(Regex("[ \u200c]"),"")==key } }?.name ?: value.trim()
+    }
     fun detect(sender: String, body: String, custom: Map<String,String> = emptyMap()): String? {
         val key=senderKey(sender)
-        custom[key]?.let { return it }
+        custom[key]?.let { return canonicalName(it) }
+        val firstLine=normalize(body.lineSequence().firstOrNull().orEmpty())
+        if(firstLine in listOf("بلو","بلوبانک","بلو بانک","بلوبانک سامان","بلو بیزنس")) return "بلوبانک سامان"
         banks.firstOrNull { bank -> bank.senders.any { senderKey(it)==key } }?.let { return it.name }
         // Read only the header; a recipient bank mentioned in a transfer must not rename the source account.
-        val header=normalize(body).lineSequence().take(2).joinToString(" ").take(100)
+        val header=body.lineSequence().take(2).map(::normalize).joinToString(" ").take(100)
         return banks.flatMap { b -> b.aliases.map { it to b.name } }.sortedByDescending { it.first.length }
-            .firstOrNull { header.startsWith(normalize(it.first)) }?.second
+            .firstOrNull { (header==normalize(it.first) || header.startsWith(normalize(it.first)+" ") || header.startsWith(normalize(it.first)+"\n")) }?.second
     }
 }

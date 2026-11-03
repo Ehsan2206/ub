@@ -4,7 +4,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
-class FinanceDb(context: Context) : SQLiteOpenHelper(context, "hesabyar.db", null, 2) {
+class FinanceDb(context: Context) : SQLiteOpenHelper(context, "hesabyar.db", null, 3) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""
             CREATE TABLE accounts(
@@ -108,6 +108,7 @@ class FinanceDb(context: Context) : SQLiteOpenHelper(context, "hesabyar.db", nul
         """.trimIndent())
 
         upgradeV2(db, false)
+        upgradeV3(db)
         seed(db)
     }
 
@@ -131,7 +132,14 @@ class FinanceDb(context: Context) : SQLiteOpenHelper(context, "hesabyar.db", nul
             }
         }
     }
+    private fun upgradeV3(db:SQLiteDatabase) {
+        db.execSQL("ALTER TABLE transactions ADD COLUMN internal_amount INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("CREATE TABLE account_aliases(bank_name TEXT NOT NULL,identity TEXT NOT NULL,account_id INTEGER NOT NULL,PRIMARY KEY(bank_name,identity))")
+        db.execSQL("CREATE INDEX account_alias_target ON account_aliases(account_id)")
+        SmsAccountReconciler.migrate(db)
+    }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) upgradeV2(db, true)
+        if (oldVersion < 3) upgradeV3(db)
     }
 }
