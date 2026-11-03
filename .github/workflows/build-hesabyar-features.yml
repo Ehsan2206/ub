@@ -2,12 +2,359 @@ name: Build HesabYar Feature APK
 
 on:
   push:
-    branches: [ hesabyar-feature-v2 ]
+    branches: [ hesabyar-feature-v2, main ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Decode and validate source
+        run: |
+          mkdir -p project decoded_parts
+          for f in source_parts/part00a.b64 source_parts/part00b.b64 source_parts/part01.b64 source_parts/part02.b64 source_parts/part03.b64; do
+            base64 -d "$f" > "decoded_parts/$(basename "$f" .b64).bin"
+          done
+          cat decoded_parts/part00a.bin decoded_parts/part00b.bin decoded_parts/part01.bin decoded_parts/part02.bin decoded_parts/part03.bin > hesabyar-source.zip
+          unzip -t hesabyar-source.zip
+          unzip -q hesabyar-source.zip -d project
+
+      - name: Prefer official repositories in CI while keeping Myket fallback
+        run: |
+          cat > project/settings.gradle.kts <<'EOF'
+          import org.gradle.api.initialization.resolve.RepositoriesMode
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+                  maven { url = uri("https://maven.myket.ir") }
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+                  maven { url = uri("https://maven.myket.ir") }
+              }
+          }
+          rootProject.name = "HesabYar"
+          include(":app")
+          EOF
+
+      - name: Apply Jalali redesign and feature base
+        run: |
+          python redesign_override/apply_redesign.py
+          cp feature_override/Models.kt project/app/src/main/java/ir/hesabyar/finance/data/Models.kt
+          cat feature_src/repo_00 feature_src/repo_01 > project/app/src/main/java/ir/hesabyar/finance/data/FinanceRepository.kt
+          cp feature_src/FinanceViewModel.kt project/app/src/main/java/ir/hesabyar/finance/ui/FinanceViewModel.kt
+          cp feature_src/SmsReceiver.kt project/app/src/main/java/ir/hesabyar/finance/sms/SmsReceiver.kt
+          cp feature_src/FinanceApp.kt project/app/src/main/java/ir/hesabyar/finance/ui/FinanceApp.kt
+          cat feature_src/screens_00 feature_src/screens_01 feature_src/screens_01a feature_src/screens_02a feature_src/screens_02b feature_src/screens_02c feature_src/screens_03 > project/app/src/main/java/ir/hesabyar/finance/ui/screens/Screens.kt
+          rm -f project/app/src/main/java/ir/hesabyar/finance/sms/SmsImporter.kt
+
+      - name: Apply HesabYar v2.0.0 Full Upgrade
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path("project/app/src/main")
+          jdir = root / "java/ir/hesabyar/finance"
+          mp = root / "AndroidManifest.xml"
+          ms = mp.read_text(encoding="utf-8")
+          for perm in ["android.permission.READ_SMS", "android.permission.RECEIVE_SMS"]:
+              if perm not in ms:
+                  ms = ms.replace("<application", f'<uses-permission android:name="{perm}" />\n    <application', 1)
+          mp.write_text(ms, encoding="utf-8")
+          (jdir / "sms/SmsParser.kt").write_text(r"""package ir.hesabyar.finance.sms
+          import ir.hesabyar.finance.data.TransactionType
+          import java.nio.charset.StandardCharsets
+          import java.security.MessageDigest
+          enum class AmountUnit{RIAL,TOMAN}
+          data class BankDefinition(val canonicalName:String,val senderNumbers:List<String>,val keywords:List<String>)
+          data class ParsedSms(val type:TransactionType,val amountToman:Long,val accountLast4:String,val reason:String,val externalKey:String,val bankName:String="بانک",val balanceRial:Long?=null)
+          object IranianBanksRegistry{
+          private val specs="بانک ملی ایران|600060,100060,200060,300060,0216099,BMI,Melli|بانک ملی,ملی ایران,بام;بانک ملت|200033,100033,300033,Mellat|بانک ملت,ملت;بانک صادرات ایران|300060,200060,100069,BSI,Saderat,Sepino|صادرات,سپینو;بانک تجارت|200070,100070,300070,Tejarat|تجارت;بانک سپه|300028,200028,100028,300057,Sepah|سپه,امیدبانک,انصار,قوامین,حکمت,کوثر,مهر اقتصاد;بانک کشاورزی|200090,100090,300090,Keshavarzi,BKI,AgriBank|کشاورزی;بانک مسکن|300014,200014,100014,Maskan|مسکن;بانک پاسارگاد|200020,100020,300020,500020,Pasargad,BPI,WePod|پاسارگاد,ویپاد;بانک سامان|20000,2000842,1000842,Saman,SB24|سامان;بلوبانک (سامان)|200094,300094,100094,Blu,BluBank|بلوبانک,بلو بانک,بلو،;بانک پارسیان|200040,200040,100040,Parsian,PEB|پارسیان;بانک اقتصاد نوین|200050,100050,300050,ENBank,Novin|اقتصاد نوین,اقتصادنوین;بانک کارآفرین|200080,100080,300080,Karafarin,KB|کارآفرین;بانک سینا|200010,100010,300010,Sina|سینا;بانک شهر|300086,200086,100086,Shahr|بانک شهر,همراه شهر;بانک دی|200029,100029,300029,DayBank|بانک دی,دی بانک;بانک آینده|200044,100044,300044,Ayandeh,Abank|آینده,آبانک;بانک رفاه کارگران|300071,300071,100071,Refah|رفاه;بانک قرض‌الحسنه مهر ایران|300085,200085,100085,MehrIran,QMB|مهر ایران,قرض الحسنه مهر;بانک قرض‌الحسنه رسالت|300018,300018,100018,Resalat,MResalat|رسالت;بانک گردشگری|200015,100015,300015,TourismBank,Tobank|گردشگری,توبانک;بانک خاورمیانه|200058,100058,300058,MEBank,Bankino|خاورمیانه,بانکینو;بانک سرمایه|200048,100048,300048,Sarmayeh|سرمایه;بانک ایران زمین|300069,200069,100069,IranZamin|ایران زمین;پست بانک ایران|200088,100088,300088,PostBank|پست بانک;بانک توسعه تعاون|300027,300027,100027,TTBank|توسعه تعاون;بانک توسعه صادرات|200025,100025,EDBI|توسعه صادرات;بانک صنعت و معدن|200011,100011,BIM|صنعت و معدن;موسسه اعتباری ملل|300073,200073,100073,Melal|ملل;موسسه اعتباری نور|300079,200079,Noor|اعتباری نور;صندوق قرض‌الحسنه|Qarz,Sandogh,3000,5000|قرض الحسنه,قرض‌الحسنه,تعاونی اعتبار".split(";")
+          val banks=specs.map{val p=it.split("|");BankDefinition(p[0],p[1].split(","),p[2].split(","))}
+          fun detectBankName(sender:String,body:String):String?{
+          val s=sender.trim().removePrefix("+").removePrefix("00")
+          val b=SmsParser.normalizeDigits(body)
+          for(bk in banks)if(bk.keywords.any{b.contains(it,true)})return bk.canonicalName
+          for(bk in banks)if(bk.senderNumbers.any{c->s.equals(c,true)||s.startsWith(c,true)||s.endsWith(c,true)||(c.length>=4&&s.contains(c,true))})return bk.canonicalName
+          return null
+          }
+          }
+          object SmsParser{
+          private val incW=listOf("واریز","افزایش","بستانکار","انتقال به","واریزی","سود","حواله وارده","+")
+          private val expW=listOf("برداشت","خرید","کاهش","بدهکار","انتقال از","پرداخت","کارمزد","قسط","پایا","ساتنا","پل","-")
+          private val balW=listOf("مانده","موجودی","موجودي","قابل برداشت")
+          private val rejW=listOf("رمز","پویا","کد تایید","کد ورود","OTP","code")
+          fun parse(sender:String,body:String,timestamp:Long=System.currentTimeMillis()):ParsedSms?{
+          val norm=normalizeDigits(body)
+          if(norm.isBlank()||(rejW.any{norm.contains(it,true)}&&!balW.any{norm.contains(it)}))return null
+          val bank=IranianBanksRegistry.detectBankName(sender,norm)
+          val hasI=incW.any{norm.contains(it)}
+          val hasE=expW.any{norm.contains(it)}
+          val bal=extractBal(norm)
+          val amt=extractAmt(norm,bal)
+          if(amt==null&&bal==null)return null
+          if(bank==null&&!hasI&&!hasE&&bal==null)return null
+          val bName=bank?:"بانک (${sender.ifBlank { "نامشخص" }})"
+          val type=if(hasE&&!hasI)TransactionType.EXPENSE else if(hasI&&!hasE)TransactionType.INCOME else TransactionType.EXPENSE
+          val last4=Regex("(?:کارت|حساب|سپرده)\\s*[:#\\-*]?\\s*[0-9*.\\-]*?([0-9]{4})\\b|\\*+([0-9]{4})\\b").find(norm)?.groupValues?.drop(1)?.firstOrNull{it.isNotBlank()}?:""
+          val rsn=if(norm.contains("خرید"))"خرید کارتی ($bName)" else if(type==TransactionType.EXPENSE)"برداشت ($bName)" else "واریز ($bName)"
+          val key=MessageDigest.getInstance("SHA-256").digest("$sender|$timestamp|${norm.take(100)}".toByteArray(StandardCharsets.UTF_8)).joinToString(""){"%02x".format(it)}.take(24)
+          return ParsedSms(type,amt?:0L,last4,rsn,key,bName,bal)
+          }
+          fun normalizeDigits(s:String):String=buildString(s.length){
+          for(c in s)when(c){
+          in '۰'..'۹'->append(('0'.code+(c.code - '۰'.code)).toChar())
+          in '٠'..'٩'->append(('0'.code+(c.code - '٠'.code)).toChar())
+          '،','٬'->append(',');'ي'->append('ی');'ك'->append('ک');else->append(c)
+          }
+          }
+          private fun toRial(v:Long,txt:String,r:IntRange):Long{
+          val sub=txt.substring((r.first - 25).coerceAtLeast(0),(r.last+25).coerceAtMost(txt.length))
+          return if(sub.contains("تومان")||sub.contains("تومن")||(txt.contains("تومان")&&!txt.contains("ریال")))v*10L else v
+          }
+          private fun extractBal(txt:String):Long?{
+          val m=Regex("(?:مانده|موجودی|قابل برداشت)\\s*[:=\\-]?\\s*([0-9][0-9,.\\s]{2,18})").find(txt)?:return null
+          val v=m.groupValues[1].replace(",","").replace(".","").replace(" ","").trim().toLongOrNull()?:return null
+          return toRial(v,txt,m.range)
+          }
+          private fun extractAmt(txt:String,bal:Long?):Long?{
+          val regs=listOf(Regex("(?:مبلغ|برداشت|واریز|خرید|انتقال|بدهکار|بستانکار|پرداخت)\\s*[:=\\-]?\\s*([0-9][0-9,.\\s]{3,18})"),Regex("([0-9][0-9,]{3,18})\\s*(?:ریال|تومان)"))
+          for(rg in regs)for(m in rg.findAll(txt)){
+          val v=m.groupValues[1].replace(",","").replace(".","").replace(" ","").trim().toLongOrNull()?:continue
+          if(v>=1000L){
+          val rl=toRial(v,txt,m.range)
+          if(bal==null||rl!=bal||txt.count{it=='\n'}>=1)return rl
+          }
+          }
+          return null
+          }
+          }""", encoding="utf-8")
+          srp = jdir / "sms/SmsReceiver.kt"
+          srs = srp.read_text(encoding="utf-8")
+          srs = srs.replace("if (timestamp < installedAt) return@Thread", "")
+          srs = srs.replace("repo.resolveSmsAccount(parsed.accountLast4, sender)", "repo.resolveOrUpdateSmsAccount(parsed.accountLast4, sender, parsed.bankName, parsed.balanceRial)")
+          srs = srs.replace("if (id > 0)", "if (parsed.balanceRial != null) repo.setAccountBalanceRial(account.id, parsed.balanceRial)\n                if (id > 0)")
+          srp.write_text(srs, encoding="utf-8")
+          modp = jdir / "data/Models.kt"
+          mods = modp.read_text(encoding="utf-8")
+          if "isExcluded" not in mods:
+              mods += '\nval Account.isExcluded: Boolean get() = groupName == "EXCLUDED" || groupName.contains("مستثنی")\n'
+              modp.write_text(mods, encoding="utf-8")
+          repp = jdir / "data/FinanceRepository.kt"
+          reps = repp.read_text(encoding="utf-8")
+          reps = reps.replace('arrayOf(tx.occurredAt, tx.reason.ifBlank { "بدون عنوان" }, tx.id)', 'arrayOf<Any>(tx.occurredAt, tx.reason.ifBlank { "بدون عنوان" }, tx.id)')
+          reps = reps.replace('SELECT COALESCE(SUM(balance),0) FROM accounts', "SELECT COALESCE(SUM(balance),0) FROM accounts WHERE COALESCE(group_name,'') != 'EXCLUDED'")
+          reps = reps.replace('SELECT COALESCE(SUM(amount),0) FROM transactions WHERE type=? AND occurred_at BETWEEN ? AND ?', "SELECT COALESCE(SUM(t.amount),0) FROM transactions t LEFT JOIN accounts a ON a.id=t.account_id WHERE t.type=? AND t.occurred_at BETWEEN ? AND ? AND COALESCE(a.group_name,'') != 'EXCLUDED'")
+          reps = reps.replace('val baseWhere = mutableListOf("t.occurred_at BETWEEN ? AND ?")', 'val baseWhere = mutableListOf("t.occurred_at BETWEEN ? AND ?", "COALESCE((SELECT a.group_name FROM accounts a WHERE a.id=t.account_id),\'\') != \'EXCLUDED\'")')
+          repo_extra = """fun setAccountBalanceRial(accountId:Long,balanceRial:Long){dbHelper.writableDatabase.execSQL("UPDATE accounts SET balance=? WHERE id=?",arrayOf<Any>(balanceRial,accountId))}
+          fun setAccountExcluded(accountId:Long,excluded:Boolean){val cv=ContentValues().apply{put("group_name",if(excluded)"EXCLUDED" else "عمومی")};dbHelper.writableDatabase.update("accounts",cv,"id=?",arrayOf(accountId.toString()))}
+          fun resolveOrUpdateSmsAccount(last4:String,sender:String,bankName:String,balanceRial:Long?):Account{
+          val cur=accounts()
+          val m=cur.firstOrNull{(last4.isNotBlank()&&it.cardLast4==last4)||(last4.isBlank()&&bankName.isNotBlank()&&(it.bankName.equals(bankName,true)||it.name.contains(bankName)))}
+          ?:cur.firstOrNull{bankName.isNotBlank()&&(it.bankName.equals(bankName,true)||it.name.contains(bankName))}
+          if(m!=null){
+          val ub=if(m.bankName.isBlank()||m.bankName=="بانک")bankName else m.bankName
+          val ul=if(m.cardLast4.isBlank()&&last4.isNotBlank())last4 else m.cardLast4
+          val un=if(m.name.startsWith("حساب پیامکی")||m.name=="بانک")(if(ul.isNotBlank())"$ub ($ul)" else ub)else m.name
+          val cv=ContentValues().apply{put("name",un);put("bank_name",ub);put("card_last4",ul);if(balanceRial!=null)put("balance",balanceRial)}
+          dbHelper.writableDatabase.update("accounts",cv,"id=?",arrayOf(m.id.toString()))
+          return m.copy(name=un,bankName=ub,cardLast4=ul,balance=balanceRial?:m.balance)
+          }
+          val cb=bankName.ifBlank{"بانک ($sender)"}
+          val dn=if(last4.isNotBlank())"$cb ($last4)" else cb
+          val na=Account(name=dn,type="بانکی",bankName=cb,cardLast4=last4,balance=balanceRial?:0L,groupName="عمومی")
+          return na.copy(id=addAccount(na))
+          }
+          fun scanInboxSms(context:Context,latestOnly:Boolean,fromMillis:Long?,toMillis:Long?):String{
+          data class RawSms(val s:String,val b:String,val d:Long)
+          val rows=mutableListOf<RawSms>()
+          val sel=mutableListOf<String>();val args=mutableListOf<String>()
+          if(!latestOnly){
+          if(fromMillis!=null&&fromMillis>0L){sel+="date >= ?";args+=fromMillis.toString()}
+          if(toMillis!=null&&toMillis>0L){sel+="date <= ?";args+=toMillis.toString()}
+          }
+          runCatching{
+          context.contentResolver.query(android.provider.Telephony.Sms.Inbox.CONTENT_URI,arrayOf("address","body","date"),if(sel.isEmpty())null else sel.joinToString(" AND "),if(args.isEmpty())null else args.toTypedArray(),"date DESC")?.use{c->
+          var n=0;while(c.moveToNext()&&n<2500){rows+=RawSms(c.getString(0).orEmpty(),c.getString(1).orEmpty(),c.getLong(2));n++}
+          }
+          }
+          if(rows.isEmpty())return "پیامکی در این بازه یافت نشد"
+          if(latestOnly){
+          val seen=mutableSetOf<String>()
+          for(r in rows){
+          val p=ir.hesabyar.finance.sms.SmsParser.parse(r.s,r.b,r.d)?:continue
+          val k="${p.bankName}|${p.accountLast4}"
+          if(k!in seen&&(p.balanceRial!=null||p.amountToman>0L)){
+          val acc=resolveOrUpdateSmsAccount(p.accountLast4,r.s,p.bankName,p.balanceRial)
+          if(p.balanceRial!=null)setAccountBalanceRial(acc.id,p.balanceRial)
+          seen+=k
+          }
+          }
+          return if(seen.isEmpty())"پیامک بانکی یافت نشد" else "${seen.size} حساب بانکی شناسایی و موجودی به ریال ثبت شد"
+          }else{
+          val lb=mutableMapOf<Long,Long>();val bks=linkedSetOf<String>();var tc=0
+          for(r in rows.asReversed()){
+          val p=ir.hesabyar.finance.sms.SmsParser.parse(r.s,r.b,r.d)?:continue
+          val acc=resolveOrUpdateSmsAccount(p.accountLast4,r.s,p.bankName,null)
+          bks+=p.bankName
+          if(p.amountToman>0L&&transactionByExternalKey(p.externalKey)==null){
+          if(addTransaction(FinanceTransaction(amount=p.amountToman,type=p.type,occurredAt=r.d,reason=p.reason,accountId=acc.id,categoryId=null,personId=null,source=TransactionSource.SMS,note="پیامک ${p.bankName}",externalKey=p.externalKey))>0L)tc++
+          }
+          if(p.balanceRial!=null)lb[acc.id]=p.balanceRial
+          }
+          for((id,b)in lb)setAccountBalanceRial(id,b)
+          return "${bks.size} حساب بانکی و $tc تراکنش به ریال ثبت شد"
+          }
+          }
+          }"""
+          repp.write_text(reps[:reps.rfind("}")] + "\n" + repo_extra, encoding="utf-8")
+          vmp = jdir / "ui/FinanceViewModel.kt"
+          vms = vmp.read_text(encoding="utf-8")
+          vm_extra = """fun syncSms()=scanSms(true,null,null)
+          fun scanSms(latestOnly:Boolean,from:Long?,to:Long?)=runBg{val msg=repo.scanInboxSms(getApplication(),latestOnly,from,to);refreshDirect();val rg=monthRange();val r=repo.report(rg.first,rg.second);main.post{report=r;toast=msg}}
+          fun toggleAccountExcluded(accountId:Long,excluded:Boolean)=runBg(if(excluded)"حساب استثنا شد" else "حساب در محاسبات فعال شد"){repo.setAccountExcluded(accountId,excluded);refreshDirect();val rg=monthRange();val r=repo.report(rg.first,rg.second);main.post{report=r}}
+          }"""
+          vmp.write_text(vms[:vms.rfind("}")] + "\n" + vm_extra, encoding="utf-8")
+          fap = jdir / "ui/FinanceApp.kt"
+          fas = fap.read_text(encoding="utf-8")
+          for imp in ["import androidx.compose.foundation.clickable", "import androidx.compose.foundation.shape.RoundedCornerShape", "import androidx.compose.ui.graphics.Color", "import androidx.compose.ui.text.font.FontWeight", "import ir.hesabyar.finance.data.*", "import ir.hesabyar.finance.util.DateUtil", "import ir.hesabyar.finance.util.JalaliDatePickerDialog"]:
+              if imp not in fas: fas = fas.replace("import android.Manifest", "import android.Manifest\n" + imp, 1)
+          fas = fas.replace("Manifest.permission.RECEIVE_SMS", "Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS")
+          fas = re.sub(r'PEOPLE\("[^"]+"\)', 'PEOPLE("حساب اشخاص")', fas)
+          if "HesabYarTopBar" not in fas:
+              fas = fas.replace("bottomBar =", "topBar = { HesabYarTopBar(vm) },\n            bottomBar =", 1)
+              fas += """@Composable
+          fun HesabYarTopBar(vm:FinanceViewModel){
+          val ctx=androidx.compose.ui.platform.LocalContext.current
+          var sDlg by remember{mutableStateOf(false)}
+          var aDlg by remember{mutableStateOf(false)}
+          val lch=rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){if(it[Manifest.permission.READ_SMS]==true)sDlg=true}
+          Surface(color=Color(0xFF0F766E),shadowElevation=4.dp){
+          Row(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=10.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+          Column{
+          Text("حساب‌یار پیشرفته (ریال)",color=Color.White,fontWeight=FontWeight.ExtraBold,fontSize=16.sp)
+          Text("پشتیبانی از سرشماره ۳۱ بانک و قرض‌الحسنه",color=Color.White.copy(alpha=0.85f),fontSize=11.sp)
+          }
+          Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
+          FilledTonalButton(onClick={if(ContextCompat.checkSelfPermission(ctx,Manifest.permission.READ_SMS)==PackageManager.PERMISSION_GRANTED)sDlg=true else lch.launch(arrayOf(Manifest.permission.READ_SMS,Manifest.permission.RECEIVE_SMS))},shape=RoundedCornerShape(12.dp)){Text("اسکن پیامک",fontSize=11.sp,fontWeight=FontWeight.Bold)}
+          FilledTonalButton(onClick={aDlg=true},shape=RoundedCornerShape(12.dp)){Text("استثنا حساب",fontSize=11.sp,fontWeight=FontWeight.Bold)}
+          }
+          }
+          }
+          if(sDlg){
+          var latest by remember{mutableStateOf(true)}
+          val now=remember{System.currentTimeMillis()}
+          var fm by remember{mutableStateOf(now - 30L*86_400_000L)}
+          var tm by remember{mutableStateOf(now)}
+          var pf by remember{mutableStateOf(false)}
+          var pt by remember{mutableStateOf(false)}
+          AlertDialog(onDismissRequest={sDlg=false},title={Text("شناسایی پیامک‌های بانکی و ثبت حساب‌ها",fontWeight=FontWeight.Bold,fontSize=15.sp)},text={
+          Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+          Row(Modifier.fillMaxWidth().clickable{latest=true},verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){RadioButton(latest,{latest=true});Text("فقط آخرین پیامک هر بانک (ثبت حساب و موجودی)",fontSize=12.sp,fontWeight=FontWeight.Bold)}
+          Row(Modifier.fillMaxWidth().clickable{latest=false},verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){RadioButton(!latest,{latest=false});Text("انتخاب بازه زمانی دلخواه (ثبت حساب و تراکنش‌ها)",fontSize=12.sp,fontWeight=FontWeight.Bold)}
+          if(!latest){
+          OutlinedTextField(DateUtil.formatDate(fm),{},readOnly=true,label={Text("از تاریخ")},trailingIcon={IconButton({pf=true}){Icon(Icons.Rounded.DateRange,null)}},modifier=Modifier.fillMaxWidth())
+          OutlinedTextField(DateUtil.formatDate(tm),{},readOnly=true,label={Text("تا تاریخ")},trailingIcon={IconButton({pt=true}){Icon(Icons.Rounded.DateRange,null)}},modifier=Modifier.fillMaxWidth())
+          }
+          }
+          },confirmButton={Button({sDlg=false;vm.scanSms(latest,fm,tm+86_399_000L)}){Text("شروع شناسایی")}},dismissButton={TextButton({sDlg=false}){Text("انصراف")}})
+          if(pf)JalaliDatePickerDialog(fm,{pf=false},{fm=it;pf=false})
+          if(pt)JalaliDatePickerDialog(tm,{pt=false},{tm=it;pt=false})
+          }
+          if(aDlg){
+          AlertDialog(onDismissRequest={aDlg=false},title={Text("استثنا کردن حساب از محاسبات کل",fontWeight=FontWeight.Bold,fontSize=15.sp)},text={
+          Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+          if(vm.accounts.isEmpty())Text("حسابی ثبت نشده است.",fontSize=12.sp)
+          vm.accounts.forEach{acc->
+          Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){
+          Column(Modifier.weight(1f)){Text(acc.name,fontWeight=FontWeight.Bold,fontSize=13.sp);Text("${acc.bankName} • ${acc.balance} ریال",fontSize=11.sp)}
+          Switch(acc.isExcluded,{vm.toggleAccountExcluded(acc.id,it)})
+          }
+          }
+          }
+          },confirmButton={Button({aDlg=false}){Text("بستن")}})
+          }
+          }"""
+          fap.write_text(fas, encoding="utf-8")
+          for ktf in jdir.rglob("*.kt"):
+              if ktf.name == "SmsParser.kt": continue
+              t = ktf.read_text(encoding="utf-8").replace("تومان", "ریال").replace("تومن", "ریال").replace('"دنگ"', '"حساب اشخاص"').replace("تب دنگ", "حساب اشخاص").replace("بخش دنگ", "حساب اشخاص")
+              if ktf.name == "BankFileParser.kt": t = t.replace("if (valuesAreRial) raw / 10 else raw", "raw")
+              ktf.write_text(t, encoding="utf-8")
+          bgp = Path("project/app/build.gradle.kts")
+          bgs = re.sub(r'versionCode\s*=\s*\d+', 'versionCode = 5', bgp.read_text(encoding="utf-8"))
+          bgs = re.sub(r'versionName\s*=\s*"[^"]+"', 'versionName = "2.0.0"', bgs)
+          bgp.write_text(bgs, encoding="utf-8")
+          PY
+
+      - name: Locate and install Android SDK 36
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER=""
+          for candidate in \
+            "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "$SDK_ROOT/cmdline-tools/bin/sdkmanager" \
+            "$SDK_ROOT/tools/bin/sdkmanager"; do
+            if [ -x "$candidate" ]; then SDKMANAGER="$candidate"; break; fi
+          done
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$SDK_ROOT" -maxdepth 6 -type f -name sdkmanager -perm -111 | head -n 1)"
+          fi
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          echo "sdk.dir=$SDK_ROOT" > project/local.properties
+          test -f "$SDK_ROOT/platforms/android-36/android.jar"
+
+      - name: Build debug APK
+        working-directory: project
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.internal.http.connectionTimeout=15000 -Dorg.gradle.internal.http.socketTimeout=15000"
+        run: gradle --no-daemon --stacktrace assembleDebug
+
+      - name: Copy and verify APK
+        run: |
+          cp project/app/build/outputs/apk/debug/app-debug.apk HesabYar.apk
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          "$SDK_ROOT/build-tools/36.0.0/apksigner" verify --verbose HesabYar.apk
+          sha256sum HesabYar.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HesabYar-v2-Rial
+          path: HesabYar.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create v2.0.0 HesabYar.apk --clobber --title "HesabYar v2.0.0 (ریال و تشخیص هوشمند بانک‌ها)" --notes "نسخه ۲.۰.۰ اپلیکیشن حساب‌یار با پشتیبانی از سرشماره ۳۱ بانک و قرض‌الحسنه، اسکن پیامک‌های قبلی (بازه زمانی دلخواه و آخرین پیامک)، استثنا کردن حساب‌ها، واحد ریال و بخش حساب اشخاص (بدهکار/طلبکار با ریز گردش)." || true-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
