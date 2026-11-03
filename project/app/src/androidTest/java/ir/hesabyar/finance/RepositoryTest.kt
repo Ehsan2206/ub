@@ -54,12 +54,12 @@ class RepositoryTest {
         val dates=listOf(11001L,11002L,11003L,11004L)
         try {
             dates.forEachIndexed { i,date ->
-                val output=shell("content insert --uri content://sms/inbox --bind address:s:200033 --bind body:s:'برداشت:100 ریال حساب:77778888 مانده:${1000-i*100} ریال' --bind date:l:$date")
+                val output=shell("content insert --uri content://sms/inbox --bind address:s:200033 --bind body:s:برداشت100ریالحساب77778888مانده${1000-i*100}ریال --bind date:l:$date")
                 assertFalse(output,output.contains("Error"))
             }
             val r=FinanceRepository(context)
             val result=ir.hesabyar.finance.sms.SmsImporter.import(context,r,11002,11003,false)
-            assertEquals(2,result.scanned);assertEquals(2,r.transactions().size)
+            assertEquals("Inbox rows: "+shell("content query --uri content://sms/inbox --projection date:body"),2,result.scanned);assertEquals(2,r.transactions().size)
             assertEquals(setOf(11002L,11003L),r.transactions().map{it.transaction.occurredAt}.toSet())
             assertEquals(800L,r.accounts().first{it.bankName.isNotBlank()}.balance)
             ir.hesabyar.finance.sms.SmsImporter.import(context,r,11001,11004,true)

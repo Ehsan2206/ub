@@ -44,5 +44,7 @@ class UiSmokeTest {
         val inst=InstrumentationRegistry.getInstrumentation()
         val file=File(inst.targetContext.getExternalFilesDir(null),"$name.png")
         inst.uiAutomation.takeScreenshot()?.let { bitmap -> file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) };bitmap.recycle() }
+        val copy=inst.uiAutomation.executeShellCommand("cp ${file.absolutePath} /sdcard/Download/hesabyar-$name.png")
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(copy).use{it.readBytes()}
     }
 }

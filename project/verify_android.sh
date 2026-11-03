@@ -2,5 +2,6 @@
 # Keep the emulator alive until screenshots are copied, including on test failure.
 gradle --no-daemon connectedDebugAndroidTest
 result=$?
-"$ANDROID_HOME/platform-tools/adb" pull /sdcard/Android/data/ir.hesabyar.finance/files ../screenshots || true
+mkdir -p ../screenshots
+for name in home person accounts; do "$ANDROID_HOME/platform-tools/adb" pull "/sdcard/Download/hesabyar-$name.png" "../screenshots/$name.png" || true; done
 exit "$result"
