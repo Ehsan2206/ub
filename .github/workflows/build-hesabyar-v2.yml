@@ -47,7 +47,7 @@ jobs:
           api-level: 29
           arch: x86_64
           disable-animations: true
-          script: cd project && gradle --no-daemon connectedDebugAndroidTest
+          script: cd project && bash verify_android.sh
       - name: Collect UI screenshots
         if: always()
         run: adb pull /sdcard/Android/data/ir.hesabyar.finance/files screenshots || true

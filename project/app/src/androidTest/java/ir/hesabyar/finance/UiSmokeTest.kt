@@ -23,14 +23,14 @@ class UiSmokeTest {
             compose.onNodeWithText("حساب اشخاص").assertExists()
             compose.onNodeWithContentDescription("افزودن شخص").performClick()
             compose.onNodeWithText("شخص جدید").assertExists()
-            compose.onNodeWithText("نام",useUnmergedTree=true).performTextInput("شخص آزمون")
+            compose.onNodeWithText("نام").performTextInput("شخص آزمون")
             compose.onNodeWithText("ذخیره").performClick()
             compose.waitUntil(10000) { compose.onAllNodesWithText("شخص آزمون").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("شخص آزمون").performClick()
             compose.onNodeWithText("ریز گردش").assertExists()
             screenshot("person")
             compose.onNodeWithText("ثبت گردش شخص").performClick()
-            compose.onNodeWithText("مبلغ (ریال)",useUnmergedTree=true).performTextInput("10000")
+            compose.onNodeWithText("مبلغ (ریال)").performTextInput("10000")
             compose.onNodeWithText("ثبت",substring=false).performClick()
             compose.waitUntil(10000) { compose.onAllNodesWithText("طلب من").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithContentDescription("بستن").performClick()
