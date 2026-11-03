@@ -3,6 +3,7 @@ name: Build HesabYar Left FAB APK
 on:
   push:
     branches: [ main ]
+    paths: ["source_parts/**", "redesign_override/**", ".github/workflows/build-hesabyar-left-fab.yml"]
   workflow_dispatch:
 
 jobs:

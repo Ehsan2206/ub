@@ -3,6 +3,7 @@ name: Build HesabYar APK
 on:
   push:
     branches: [ main ]
+    paths: ["source_parts/**", "redesign_override/**", ".github/workflows/build-hesabyar.yml"]
   workflow_dispatch:
 
 jobs:

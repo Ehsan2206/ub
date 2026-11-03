@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+set -e
+APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+GRADLE_VERSION=8.13
+DIST_ROOT="${HOME}/.gradle/hesabyar-wrapper"
+GRADLE_HOME="${DIST_ROOT}/gradle-${GRADLE_VERSION}"
+ZIP_FILE="${DIST_ROOT}/gradle-${GRADLE_VERSION}-bin.zip"
+DIST_URL="https://maven.myket.ir/gradle/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+if [ ! -x "${GRADLE_HOME}/bin/gradle" ]; then
+  mkdir -p "${DIST_ROOT}"
+  echo "[HesabYar] Downloading Gradle ${GRADLE_VERSION} from Myket mirror..."
+  if command -v curl >/dev/null 2>&1; then curl -fL "${DIST_URL}" -o "${ZIP_FILE}"; else wget -O "${ZIP_FILE}" "${DIST_URL}"; fi
+  rm -rf "${GRADLE_HOME}"
+  unzip -q -o "${ZIP_FILE}" -d "${DIST_ROOT}"
+fi
+exec "${GRADLE_HOME}/bin/gradle" "$@"

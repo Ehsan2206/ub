@@ -3,6 +3,7 @@ name: Build HesabYar SMS Currency APK
 on:
   push:
     branches: [ main ]
+    paths: ["source_parts/**", "redesign_override/**", ".github/workflows/build-hesabyar-sms-currency.yml"]
   workflow_dispatch:
 
 jobs:

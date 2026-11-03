@@ -1,0 +1,61 @@
+name: HesabYar v2 verified APK
+on:
+  push:
+    branches: [main]
+    paths: ['project/**', '.github/workflows/build-hesabyar-v2.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Build and test
+        working-directory: project
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          gradle --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest
+      - name: Verify APK signature
+        run: |
+          cp project/app/build/outputs/apk/debug/app-debug.apk HesabYar-v2.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose HesabYar-v2.apk
+          sha256sum HesabYar-v2.apk > HesabYar-v2.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HesabYar-v2
+          path: |
+            HesabYar-v2.apk
+            HesabYar-v2.sha256
+            project/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Database and UI tests on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          disable-animations: true
+          script: cd project && gradle --no-daemon connectedDebugAndroidTest
+      - name: Collect UI screenshots
+        if: always()
+        run: adb pull /sdcard/Android/data/ir.hesabyar.finance/files screenshots || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: HesabYar-v2-test-reports
+          path: |
+            screenshots
+            project/app/build/reports
+            project/app/build/outputs/androidTest-results
