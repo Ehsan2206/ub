@@ -20,6 +20,9 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = FinanceRepository(app)
     private val executor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
+    private var reportBounds=DateUtil.jalaliMonthRange()
+    private var reportAccount:Long?=null
+    private var reportPerson:Long?=null
 
     var ledgers by mutableStateOf<Map<Long,List<LedgerEntry>>>(emptyMap()); private set
     var senderRules by mutableStateOf<Map<String,String>>(emptyMap()); private set
@@ -54,7 +57,7 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     fun refresh() = runBg {
         val a = repo.accounts(); val p = repo.personBalances(); val c = repo.categories(); val t = repo.transactions(limit = 300)
         val i = repo.installments(); val d = repo.dashboard(); val b = repo.recentImportEntries()
-        val range = monthRange(); val r = repo.report(range.first, range.second)
+        val r = repo.report(reportBounds.first, reportBounds.second,reportAccount,reportPerson)
         val l=p.associate { it.person.id to repo.ledger(it.person.id) }; val rules=ir.hesabyar.finance.sms.SmsImporter.custom(getApplication())
         main.post { ledgers=l; senderRules=rules; accounts=a; people=p; categories=c; transactions=t; installments=i; dashboard=d; bankEntries=b; report=r }
     }
@@ -106,13 +109,14 @@ class FinanceViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadReport(from: Long, to: Long, accountId: Long? = null, personId: Long? = null) = runBg {
+        reportBounds=from to to;reportAccount=accountId;reportPerson=personId
         val r = repo.report(from, to, accountId, personId); main.post { report = r }
     }
 
     private fun refreshDirect() {
         val a = repo.accounts(); val p = repo.personBalances(); val c = repo.categories(); val t = repo.transactions(limit=300)
         val i = repo.installments(); val d = repo.dashboard(); val b = repo.recentImportEntries()
-        val range=monthRange(); val updatedReport=repo.report(range.first,range.second)
+        val updatedReport=repo.report(reportBounds.first,reportBounds.second,reportAccount,reportPerson)
         main.post { report=updatedReport }
         val l=p.associate { it.person.id to repo.ledger(it.person.id) }; val rules=ir.hesabyar.finance.sms.SmsImporter.custom(getApplication())
         main.post { ledgers=l; senderRules=rules; accounts=a; people=p; categories=c; transactions=t; installments=i; dashboard=d; bankEntries=b }

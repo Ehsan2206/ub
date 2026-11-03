@@ -35,5 +35,11 @@ class SmsParserTest {
         assertEquals("بانک قرض‌الحسنه رسالت",SmsParser.parse("1000000","بانک قرض الحسنه رسالت\nواریز:500 ریال",10)!!.bankName)
         assertNull(SmsParser.parse("999999","انتقال به بانک ملی\nمبلغ: 500 ریال",10))
     }
+    @Test fun multilineAndSignedFormats() {
+        val a=SmsParser.parse("200033","برداشت\n250000\nمانده:750000",10)!!
+        assertEquals(250000L,a.amountRial)
+        val b=SmsParser.parse("200033","حساب:1234\n-100,000\nمانده:900,000",11)!!
+        assertEquals(TransactionType.EXPENSE,b.type);assertEquals(100000L,b.amountRial)
+    }
     @Test fun overflowSkipped() {assertNull(SmsParser.parse("200033","واریز:9223372036854775807 تومان",10))}
 }

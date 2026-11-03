@@ -45,6 +45,13 @@ class RepositoryTest {
         assertEquals(850L,r.personBalances().single().net);r.deleteTransaction(tx);assertEquals(750L,r.personBalances().single().net)
         r.deleteLedger(r.ledger(id).first().id);assertEquals(1000L,r.personBalances().single().net)
     }
+    @Test fun reimportAttachesLegacyUnassignedSms() {
+        val r=FinanceRepository(context);val parsed=p(10,100,900)
+        r.addTransaction(FinanceTransaction(amount=100,type=TransactionType.EXPENSE,occurredAt=10,reason="قدیمی",accountId=null,categoryId=null,personId=null,source=TransactionSource.SMS,externalKey=parsed.externalKey))
+        r.acceptSms(parsed)
+        assertEquals(1,r.transactions().size);assertNotNull(r.transactions().single().transaction.accountId)
+        assertEquals(900L,r.accounts().first{it.bankName.isNotBlank()}.balance)
+    }
     @Test fun migrationConvertsTomanExactlyOnce() {
         // Construct the actual v1 schema by creating current tables and rebuilding only accounts.
         val helper=FinanceDb(context);val db=helper.writableDatabase

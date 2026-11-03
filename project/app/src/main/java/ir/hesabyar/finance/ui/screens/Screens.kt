@@ -376,7 +376,7 @@ fun MoreScreen(
         }
         FeatureSection("ورود فایل بانک و مغایرت‌گیری",Icons.Rounded.FactCheck){
             SimpleSelectorField("حساب مورد تطبیق",accounts.map{it.id to it.name},importAccountId){importAccountId=it}
-            Row(verticalAlignment=Alignment.CenterVertically){Text("مبالغ فایل بر حسب ریال است",Modifier.weight(1f));Switch(valuesAreRial,{valuesAreRial=it})}
+            Row(verticalAlignment=Alignment.CenterVertically){Text(if(valuesAreRial)"واحد فایل: ریال" else "واحد فایل: تومان؛ تبدیل به ریال",Modifier.weight(1f));Switch(valuesAreRial,{valuesAreRial=it})}
             Button(onClick={picker.launch(arrayOf("text/*","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/octet-stream"))},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.UploadFile,null);Spacer(Modifier.width(8.dp));Text("انتخاب CSV / XLSX")}
             if(bankEntries.isNotEmpty()){
                 val matched=bankEntries.count{it.matchedTransactionId!=null};Text("${bankEntries.size} ردیف اخیر • $matched تطبیق • ${bankEntries.size-matched} مغایرت",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)

@@ -286,6 +286,16 @@ class FinanceRepository(context: Context) : java.io.Closeable {
             if(!snapshotOnly && p.amountRial!=null && p.type!=null) {
                 val id=addTransaction(FinanceTransaction(amount=p.amountRial,type=p.type,occurredAt=p.timestamp,reason=p.reason,accountId=accountId,categoryId=null,personId=null,source=TransactionSource.SMS,externalKey=p.externalKey))
                 changed=changed || id>0
+                if(id<=0) {
+                    // Earlier versions kept unmatched SMS without an account. Attach those on re-import.
+                    val values=ContentValues().apply { put("account_id",accountId);put("amount",p.amountRial);put("type",p.type.name);put("reason",p.reason) }
+                    val attached=db.update("transactions",values,"external_key=? AND account_id IS NULL AND source='SMS'",arrayOf(p.externalKey))
+                    if(attached>0) {
+                        val delta=if(p.type==TransactionType.INCOME) p.amountRial else -p.amountRial
+                        db.execSQL("UPDATE accounts SET balance=balance+? WHERE id=? AND balance_at<?",arrayOf<Any>(delta,accountId,p.timestamp))
+                        changed=true
+                    }
+                }
             }
             p.balanceRial?.let { balance ->
                 val anchor=db.rawQuery("SELECT balance_at FROM accounts WHERE id=?",arrayOf(accountId.toString())).use { it.moveToFirst();it.getLong(0) }
