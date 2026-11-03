@@ -160,6 +160,14 @@ class RepositoryTest {
             assertEquals(640000L,r.report(0,300).expense);assertEquals(10000L,r.transaction(tx.id)!!.internalAmount)
         }
     }
+    @Test fun unidentifiedBalanceDoesNotDoubleCountManuallyCreatedAccounts() {
+        FinanceRepository(context).use { r ->
+            r.addAccount(Account(name="حساب اول",bankName="TejaratBank",balance=1000))
+            r.addAccount(Account(name="حساب دوم",bankName="بانک تجارت",balance=2000))
+            r.acceptSms(SmsParser.parse("TejaratBank","برداشت:100 ریال\nمانده:700 ریال",100)!!)
+            assertEquals(3000L,r.dashboard().totalBalance)
+        }
+    }
     @Test fun maskedSuffixStopsBeingUniqueWhenASecondAccountIsDiscovered() {
         FinanceRepository(context).use { r ->
             r.acceptSms(SmsParser.parse("TejaratBank","برداشت:100 ریال\nحساب:11111234\nکارت:6037990011111234\nمانده:900 ریال",100)!!)

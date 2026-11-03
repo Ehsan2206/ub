@@ -125,3 +125,6 @@ data class TransactionFilter(
 )
 
 data class LedgerEntry(val id: Long, val occurredAt: Long, val signed: Long, val note: String, val transactionId: Long?)
+
+val Account.selectionLabel:String
+    get() = if(smsIdentity.isNotBlank() && smsIdentity!="unidentified" && !name.contains(smsIdentity)) "$name • $smsIdentity" else name

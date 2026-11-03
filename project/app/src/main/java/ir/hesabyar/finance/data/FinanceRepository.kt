@@ -187,7 +187,7 @@ class FinanceRepository(context: Context) : java.io.Closeable {
             "SELECT COALESCE(SUM(amount-internal_amount),0) FROM transactions WHERE (account_id IS NULL OR account_id IN (SELECT id FROM accounts WHERE excluded=0)) AND type=? AND occurred_at BETWEEN ? AND ?",
             arrayOf(type.name, from.toString(), to.toString())
         ).use { c -> c.moveToFirst(); c.getLong(0) }
-        val totalBalance = dbHelper.readableDatabase.rawQuery("SELECT COALESCE(SUM(balance),0) FROM accounts a WHERE excluded=0 AND NOT(a.sms_identity='unidentified' AND EXISTS(SELECT 1 FROM accounts b WHERE b.bank_name=a.bank_name AND b.sms_identity<>'unidentified' AND b.sms_identity<>''))", null).use { c -> c.moveToFirst(); c.getLong(0) }
+        val totalBalance = dbHelper.readableDatabase.rawQuery("SELECT COALESCE(SUM(balance),0) FROM accounts a WHERE excluded=0 AND NOT(a.sms_identity='unidentified' AND EXISTS(SELECT 1 FROM accounts b WHERE b.bank_name=a.bank_name AND b.id<>a.id AND b.sms_identity<>'unidentified'))", null).use { c -> c.moveToFirst(); c.getLong(0) }
         val balances = personBalances()
         return DashboardSummary(
             totalBalance = totalBalance,

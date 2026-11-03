@@ -204,7 +204,7 @@ fun TransactionsScreen(padding: PaddingValues, transactions: List<TransactionRow
             FilterChip(type==null,{type=null},{Text("همه")})
             FilterChip(type==TransactionType.EXPENSE,{type=TransactionType.EXPENSE},{Text("مخارج")})
             FilterChip(type==TransactionType.INCOME,{type=TransactionType.INCOME},{Text("درآمد")})
-            SimpleSelectorChip("حساب", accounts.map { it.id to it.name }, accountId) { accountId=it }
+            SimpleSelectorChip("حساب", accounts.map { it.id to it.selectionLabel }, accountId) { accountId=it }
             SimpleSelectorChip("شخص", people.map { it.id to it.name }, personId) { personId=it }
         }
         Text("${filtered.size} مورد", fontSize=12.sp, color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -289,7 +289,7 @@ fun ReportsScreen(padding:PaddingValues,accounts:List<Account>,people:List<Perso
         ScreenTitle("گزارش‌های مالی", "تحلیل درآمد و هزینه بر اساس تقویم شمسی", Icons.Rounded.BarChart)
         Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)){ReportRange.entries.forEach{r->FilterChip(range==r,{range=r},{Text(r.label)})}}
         if(range==ReportRange.CUSTOM){Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){DateButton("از",customFrom,Modifier.weight(1f)){customFrom=it};DateButton("تا",customTo,Modifier.weight(1f)){customTo=it}}}
-        Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)){SimpleSelectorChip("همه حساب‌ها",accounts.map{it.id to it.name},accountId){accountId=it};SimpleSelectorChip("همه اشخاص",people.map{it.id to it.name},personId){personId=it}}
+        Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)){SimpleSelectorChip("همه حساب‌ها",accounts.map{it.id to it.selectionLabel},accountId){accountId=it};SimpleSelectorChip("همه اشخاص",people.map{it.id to it.name},personId){personId=it}}
         Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){ReportValue("درآمد",report.income,MaterialTheme.colorScheme.secondary,Modifier.weight(1f));ReportValue("هزینه",report.expense,MaterialTheme.colorScheme.error,Modifier.weight(1f))}
         ReportValue("خالص بازه",report.net,if(report.net>=0)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,Modifier.fillMaxWidth())
         Text("هزینه بر اساس دسته‌بندی",fontSize=18.sp,fontWeight=FontWeight.Black)
@@ -370,8 +370,9 @@ fun MoreScreen(
                 Text(bank,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
                 bankAccounts.forEach { a ->
                     Column(Modifier.fillMaxWidth().padding(vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                        Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(a.name,fontWeight=FontWeight.Bold);Text(a.cardLast4.takeIf{it.isNotBlank()}?.let{"شناسه حساب / کارت: $it"} ?: a.type,fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)};Text(Money.format(a.balance),fontWeight=FontWeight.Bold)}
+                        Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(a.name,fontWeight=FontWeight.Bold);Text(a.smsIdentity.takeIf{it.isNotBlank() && it!=AccountIdentity.UNIDENTIFIED}?.let{"شناسه حساب / کارت: $it"} ?: a.cardLast4.takeIf{it.isNotBlank()}?.let{"۴ رقم آخر: $it"} ?: a.type,fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)};Text(Money.format(a.balance),fontWeight=FontWeight.Bold)}
                         if(a.smsIdentity==AccountIdentity.UNIDENTIFIED) Text("پیامک شماره حساب ندارد؛ برای تفکیک چند حساب، حساب هر تراکنش را در ویرایش مشخص کنید.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        if(a.smsIdentity==AccountIdentity.UNIDENTIFIED && bankAccounts.any{it.id!=a.id && it.smsIdentity!=AccountIdentity.UNIDENTIFIED}) Text("این مانده بدون شناسه دوباره به جمع حساب‌های بانک اضافه نمی‌شود.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(verticalAlignment=Alignment.CenterVertically){Text(if(a.excluded)"مستثنا از محاسبات" else "فعال در محاسبات",Modifier.weight(1f),fontSize=12.sp);Switch(checked=!a.excluded,onCheckedChange={onExclude(a.id,!it)})}
                         HorizontalDivider()
                     }
@@ -386,7 +387,7 @@ fun MoreScreen(
             InstallmentsList(installments,onPaid)
         }
         FeatureSection("ورود فایل بانک و مغایرت‌گیری",Icons.Rounded.FactCheck){
-            SimpleSelectorField("حساب مورد تطبیق",accounts.map{it.id to it.name},importAccountId){importAccountId=it}
+            SimpleSelectorField("حساب مورد تطبیق",accounts.map{it.id to it.selectionLabel},importAccountId){importAccountId=it}
             Row(verticalAlignment=Alignment.CenterVertically){Text(if(valuesAreRial)"واحد فایل: ریال" else "واحد فایل: تومان؛ تبدیل به ریال",Modifier.weight(1f));Switch(valuesAreRial,{valuesAreRial=it})}
             Button(onClick={picker.launch(arrayOf("text/*","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/octet-stream"))},modifier=Modifier.fillMaxWidth()){Icon(Icons.Rounded.UploadFile,null);Spacer(Modifier.width(8.dp));Text("انتخاب CSV / XLSX")}
             if(bankEntries.isNotEmpty()){
@@ -441,7 +442,7 @@ private fun AddInstallmentDialog(accounts:List<Account>,people:List<Person>,onDi
     AlertDialog(onDismissRequest=onDismiss,title={Text("برنامه اقساط")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
         OutlinedTextField(title,{title=it},label={Text("عنوان قسط / قرارداد")});OutlinedTextField(amount,{amount=it},label={Text("مبلغ هر قسط (ریال)")});DateButton("اولین سررسید",date,Modifier.fillMaxWidth()){date=it}
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedTextField(count,{count=it},label={Text("تعداد اقساط")},modifier=Modifier.weight(1f));OutlinedTextField(everyMonths,{everyMonths=it},label={Text("فاصله (ماه)")},modifier=Modifier.weight(1f))}
-        SimpleSelectorField("حساب پرداخت",accounts.map{it.id to it.name},accountId){accountId=it};SimpleSelectorField("طرف حساب (اختیاری)",people.map{it.id to it.name},personId){personId=it};OutlinedTextField(reminder,{reminder=it},label={Text("چند روز قبل یادآوری شود؟")})
+        SimpleSelectorField("حساب پرداخت",accounts.map{it.id to it.selectionLabel},accountId){accountId=it};SimpleSelectorField("طرف حساب (اختیاری)",people.map{it.id to it.name},personId){personId=it};OutlinedTextField(reminder,{reminder=it},label={Text("چند روز قبل یادآوری شود؟")})
     }},confirmButton={Button(onClick={onSave(Installment(title=title.trim(),amount=Money.parse(amount),dueAt=date.atStartOfDay(zone).toInstant().toEpochMilli(),accountId=accountId,personId=personId,repeatUnit="ماه",repeatEvery=everyMonths.normalizeDigits().toIntOrNull()?.coerceIn(1,24)?:1,reminderDaysBefore=reminder.normalizeDigits().toIntOrNull()?.coerceIn(0,30)?:1),count.normalizeDigits().toIntOrNull()?.coerceIn(1,120)?:1)},enabled=title.isNotBlank()&&Money.parse(amount)>0){Text("ساخت برنامه")}},dismissButton={TextButton(onClick=onDismiss){Text("لغو")}})
 }
 
@@ -491,7 +492,7 @@ fun AddTransactionDialog(
                     if((initial?.internalAmount ?: 0)>0 && type==TransactionType.EXPENSE) OutlinedTextField(roundAmount,{roundAmount=it},label={Text("انتقال رند به باکس (ریال)")},modifier=Modifier.fillMaxWidth(),supportingText={Text("این بخش در هزینه‌ها محاسبه نمی‌شود")})
                     OutlinedTextField(reason,{reason=it},label={Text("علت / شرح")},modifier=Modifier.fillMaxWidth())
                     DateButton("تاریخ",txDate,Modifier.fillMaxWidth()){txDate=it}
-                    SimpleSelectorField("حساب (اختیاری)",accounts.map{it.id to it.name},accountId){accountId=it}
+                    SimpleSelectorField("حساب (اختیاری)",accounts.map{it.id to it.selectionLabel},accountId){accountId=it}
                     SimpleSelectorField("دسته‌بندی",allowedCats.map{it.id to it.name},categoryId){categoryId=it}
                     if(!split) SimpleSelectorField("طرف حساب (اختیاری)",people.map{it.id to it.name},personId){personId=it}
                     Surface(shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.surfaceVariant) {
