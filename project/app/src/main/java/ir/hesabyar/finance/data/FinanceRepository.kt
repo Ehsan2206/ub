@@ -344,7 +344,13 @@ class FinanceRepository(context: Context) : java.io.Closeable {
             val primaryExact=ids.firstOrNull()?.takeIf(AccountIdentity::isFull)?.let(::mapped).orEmpty()
             val strongMapped=if(primaryExact.isNotEmpty())primaryExact else ids.filter(AccountIdentity::isFull).flatMap(::mapped).distinct()
             val aliasMatches=db.rawQuery("SELECT identity,account_id FROM account_aliases WHERE bank_name=?",arrayOf(bank)).use { c -> buildSet { while(c.moveToNext()) if(ids.any{AccountIdentity.matches(it,c.getString(0))})add(c.getLong(1)) } }
-            val candidates=bankAccounts.filter { a -> a.id in aliasMatches || ids.any { AccountIdentity.matches(it,AccountIdentity.normalize(a.smsIdentity)) } }
+            val primaryFull=ids.firstOrNull()?.takeIf(AccountIdentity::isFull)
+            val candidates=bankAccounts.filter { a ->
+                val existingId=AccountIdentity.normalize(a.smsIdentity)
+                // A suffix match cannot override a different complete account identifier.
+                val conflictingFull=primaryFull!=null && AccountIdentity.isFull(existingId) && primaryFull!=existingId
+                !conflictingFull && (a.id in aliasMatches || ids.any { AccountIdentity.matches(it,existingId) })
+            }
             val suffix=if(ids.isNotEmpty() && strongMapped.isEmpty() && candidates.isEmpty()) bankAccounts.filter { it.smsIdentity.isBlank() && it.cardLast4==p.accountLast4 && p.accountLast4.isNotBlank() }.singleOrNull() else null
             val matched=when {strongMapped.size==1 -> bankAccounts.firstOrNull{it.id==strongMapped.single()}; strongMapped.size>1 -> null; candidates.size==1 -> candidates.single();else -> suffix}
             val ambiguous=strongMapped.size>1 || (strongMapped.isEmpty() && candidates.size>1)
