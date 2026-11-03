@@ -160,6 +160,20 @@ class RepositoryTest {
             assertEquals(640000L,r.report(0,300).expense);assertEquals(10000L,r.transaction(tx.id)!!.internalAmount)
         }
     }
+    @Test fun maskedSuffixStopsBeingUniqueWhenASecondAccountIsDiscovered() {
+        FinanceRepository(context).use { r ->
+            r.acceptSms(SmsParser.parse("TejaratBank","برداشت:100 ریال\nحساب:11111234\nکارت:6037990011111234\nمانده:900 ریال",100)!!)
+            r.acceptSms(SmsParser.parse("TejaratBank","برداشت:100 ریال\nکارت:****1234\nمانده:800 ریال",200)!!)
+            r.acceptSms(SmsParser.parse("TejaratBank","برداشت:100 ریال\nحساب:22221234\nمانده:2000 ریال",300)!!)
+            r.acceptSms(SmsParser.parse("TejaratBank","برداشت:100 ریال\nکارت:****1234\nمانده:700 ریال",400)!!)
+            assertEquals(2800L,r.dashboard().totalBalance)
+            val unknown=r.accounts().single{it.smsIdentity=="unidentified"}
+            assertEquals(unknown.id,r.transactions().first{it.transaction.occurredAt==400L}.transaction.accountId)
+            r.acceptSms(SmsParser.parse("TejaratBank","برداشت:100 ریال\nحساب:22221234\nکارت:****1234\nمانده:1900 ریال",500)!!)
+            assertEquals(1900L,r.accounts().single{it.smsIdentity=="22221234"}.balance)
+            assertEquals(2700L,r.dashboard().totalBalance)
+        }
+    }
     @Test fun rescanCorrectsOldSamanClassificationForBluWithoutDoubleBalance() {
         val parsed=SmsParser.parse("20000","بلو\nبرداشت رند\nمشتری عزیز،640,000 ریال از حساب شما پرید.\nو 10,000 ریال هم رند شد.\nموجودی:7,642,736 ریال",200)!!
         FinanceRepository(context).use { r ->

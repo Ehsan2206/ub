@@ -340,12 +340,14 @@ class FinanceRepository(context: Context) : java.io.Closeable {
             val bank=BankRegistry.canonicalName(p.bankName)
             val ids=(p.accountIdentities.ifEmpty{listOf(p.accountIdentity)}).map(AccountIdentity::normalize).filter{it!=AccountIdentity.UNIDENTIFIED}.distinct()
             val bankAccounts=accounts().filter{it.bankName==bank}
-            val mapped=ids.flatMap { identity -> db.rawQuery("SELECT account_id FROM account_aliases WHERE bank_name=? AND identity=?",arrayOf(bank,identity)).use { c ->buildList{while(c.moveToNext())add(c.getLong(0))} } }.distinct()
+            fun mapped(identity:String):List<Long> = db.rawQuery("SELECT account_id FROM account_aliases WHERE bank_name=? AND identity=?",arrayOf(bank,identity)).use { c ->buildList{while(c.moveToNext())add(c.getLong(0))} }
+            val primaryExact=ids.firstOrNull()?.takeIf(AccountIdentity::isFull)?.let(::mapped).orEmpty()
+            val strongMapped=if(primaryExact.isNotEmpty())primaryExact else ids.filter(AccountIdentity::isFull).flatMap(::mapped).distinct()
             val aliasMatches=db.rawQuery("SELECT identity,account_id FROM account_aliases WHERE bank_name=?",arrayOf(bank)).use { c -> buildSet { while(c.moveToNext()) if(ids.any{AccountIdentity.matches(it,c.getString(0))})add(c.getLong(1)) } }
             val candidates=bankAccounts.filter { a -> a.id in aliasMatches || ids.any { AccountIdentity.matches(it,AccountIdentity.normalize(a.smsIdentity)) } }
-            val suffix=if(ids.isNotEmpty() && mapped.isEmpty() && candidates.isEmpty()) bankAccounts.filter { it.smsIdentity.isBlank() && it.cardLast4==p.accountLast4 && p.accountLast4.isNotBlank() }.singleOrNull() else null
-            val matched=when {mapped.size==1 -> bankAccounts.firstOrNull{it.id==mapped.single()}; mapped.size>1 -> null; candidates.size==1 -> candidates.single();else -> suffix}
-            val ambiguous=mapped.size>1 || (mapped.isEmpty() && candidates.size>1)
+            val suffix=if(ids.isNotEmpty() && strongMapped.isEmpty() && candidates.isEmpty()) bankAccounts.filter { it.smsIdentity.isBlank() && it.cardLast4==p.accountLast4 && p.accountLast4.isNotBlank() }.singleOrNull() else null
+            val matched=when {strongMapped.size==1 -> bankAccounts.firstOrNull{it.id==strongMapped.single()}; strongMapped.size>1 -> null; candidates.size==1 -> candidates.single();else -> suffix}
+            val ambiguous=strongMapped.size>1 || (strongMapped.isEmpty() && candidates.size>1)
             val identity=if(ids.isEmpty() || ambiguous) AccountIdentity.UNIDENTIFIED else ids.first()
             val existing=matched ?: bankAccounts.firstOrNull{AccountIdentity.normalize(it.smsIdentity)==identity && it.smsIdentity.isNotBlank()}
             if(existing?.excluded==true) return false
@@ -354,7 +356,9 @@ class FinanceRepository(context: Context) : java.io.Closeable {
                 db.execSQL("UPDATE accounts SET sms_identity=?,card_last4=? WHERE id=?",arrayOf<Any>(identity,p.accountLast4,accountId))
             }
             if(!ambiguous && identity!=AccountIdentity.UNIDENTIFIED) ids.forEach { alias ->
-                db.execSQL("INSERT OR IGNORE INTO account_aliases(bank_name,identity,account_id) VALUES(?,?,?)",arrayOf<Any>(bank,alias,accountId))
+                // A previously unique masked suffix can become ambiguous when another account is discovered.
+                val matchesOther=if(AccountIdentity.isFull(alias))false else bankAccounts.any { it.id!=accountId && AccountIdentity.matches(alias,AccountIdentity.normalize(it.smsIdentity)) }
+                if(!matchesOther) db.execSQL("INSERT OR IGNORE INTO account_aliases(bank_name,identity,account_id) VALUES(?,?,?)",arrayOf<Any>(bank,alias,accountId))
             }
             var changed=existing==null
             if(p.amountRial!=null && p.type!=null) {
