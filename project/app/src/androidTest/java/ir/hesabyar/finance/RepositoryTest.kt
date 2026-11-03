@@ -46,16 +46,20 @@ class RepositoryTest {
         r.deleteLedger(r.ledger(id).first().id);assertEquals(1000L,r.personBalances().single().net)
     }
     private fun shell(command:String):String {
-        val fd=InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+        val script=java.io.File(context.getExternalFilesDir(null),"fixture-command.sh")
+        script.writeText(command+" 2>&1\n")
+        val fd=InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("sh ${script.absolutePath}")
         return android.os.ParcelFileDescriptor.AutoCloseInputStream(fd).bufferedReader().use{it.readText()}
     }
     @Test fun inboxImportHonorsInclusiveDatesAndLatestBalance() {
-        shell("pm grant ir.hesabyar.finance android.permission.READ_SMS")
+        InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission("ir.hesabyar.finance","android.permission.READ_SMS")
+        shell("appops set com.android.shell WRITE_SMS allow")
+        shell("appops set com.android.shell READ_SMS allow")
         val dates=listOf(11001L,11002L,11003L,11004L)
         try {
             dates.forEachIndexed { i,date ->
                 val output=shell("content insert --uri content://sms/inbox --bind address:s:200033 --bind body:s:برداشت100ریالحساب77778888مانده${1000-i*100}ریال --bind date:l:$date")
-                assertFalse(output,output.contains("Error"))
+                assertFalse(output,output.contains("Error",true)||output.contains("Exception"))
             }
             val r=FinanceRepository(context)
             val result=ir.hesabyar.finance.sms.SmsImporter.import(context,r,11002,11003,false)
